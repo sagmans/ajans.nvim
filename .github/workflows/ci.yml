@@ -11,4 +11,4 @@ jobs:
     secrets: inherit
     with:
       plugin: ajans.nvim
-      repo: assagman/ajans.nvim
+      repo: sagmans/ajans.nvim

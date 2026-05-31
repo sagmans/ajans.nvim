@@ -1,5 +1,5 @@
 local base = {
-  "assagman/ajans.nvim",
+  "sagmans/ajans.nvim",
   opts = {
     -- add any options here
   },
