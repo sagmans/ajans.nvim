@@ -12,7 +12,7 @@ With lazy.nvim:
 
 ```lua
 {
-  "assagman/ajans.nvim",
+  "sagmans/ajans.nvim",
   opts = {},
 }
 ```
@@ -91,7 +91,7 @@ local defaults = {
       dump = 2000,
     },
     --- Actual cli tool config is loaded from the runtime path `aj/cli/{tool}.lua` and merged with the config below.
-    --- For default configs, see https://github.com/assagman/ajans.nvim/tree/main/aj/cli
+    --- For default configs, see https://github.com/sagmans/ajans.nvim/tree/main/aj/cli
     ---@type table<string, ajans.cli.Config|{}>
     tools = {
       aider    = {},

@@ -31,7 +31,7 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-  "assagman/ajans.nvim",
+  "sagmans/ajans.nvim",
   opts = {},
 }
 ```

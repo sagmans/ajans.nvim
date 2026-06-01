@@ -10,7 +10,7 @@ Generated from `tests/fixtures/readme.lua` by `./scripts/docs`.
 
 ```lua
 {
-  "assagman/ajans.nvim",
+  "sagmans/ajans.nvim",
   opts = {
     -- add any options here
   },

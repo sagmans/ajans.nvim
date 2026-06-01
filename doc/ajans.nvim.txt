@@ -62,7 +62,7 @@ Example lazy.nvim setup:
 
 >lua
     {
-      "assagman/ajans.nvim",
+      "sagmans/ajans.nvim",
       opts = {
         -- add any options here
       },

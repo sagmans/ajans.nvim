@@ -6,10 +6,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Before** reporting an issue, make sure to read the [documentation](https://github.com/assagman/ajans.nvim)
-        and search [existing issues](https://github.com/assagman/ajans.nvim/issues).
+        **Before** reporting an issue, make sure to read the [documentation](https://github.com/sagmans/ajans.nvim)
+        and search [existing issues](https://github.com/sagmans/ajans.nvim/issues).
 
-        Usage questions such as ***"How do I...?"*** belong in [Discussions](https://github.com/assagman/ajans.nvim/discussions) and will be closed.
+        Usage questions such as ***"How do I...?"*** belong in [Discussions](https://github.com/sagmans/ajans.nvim/discussions) and will be closed.
   - type: checkboxes
     attributes:
       label: Did you check docs and existing issues?
@@ -67,7 +67,7 @@ body:
 
         require("lazy.minit").repro({
           spec = {
-            { "assagman/ajans.nvim", opts = {} },
+            { "sagmans/ajans.nvim", opts = {} },
             -- add any other plugins here
           },
         })
