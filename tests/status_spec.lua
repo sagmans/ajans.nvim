@@ -27,13 +27,16 @@ end
 
 describe("status", function()
   local original_attached
+  local original_schedule
 
   before_each(function()
     original_attached = Session.attached
+    original_schedule = vim.schedule
   end)
 
   after_each(function()
     Session.attached = original_attached
+    vim.schedule = original_schedule
   end)
 
   it("returns no CLI sessions when none are attached", function()
@@ -153,7 +156,7 @@ describe("status", function()
     assert.are.same({}, Status.cli())
   end)
 
-  it("refreshes CLI cache after the periodic refresh interval", function()
+  it("refreshes the periodic cache without blocking statusline rendering", function()
     local calls = 0
     Session.attached = function()
       calls = calls + 1
@@ -171,7 +174,14 @@ describe("status", function()
 
     Status.setup()
     set_cli_last_update(vim.uv.now() - 5001)
+    local scheduled
+    vim.schedule = function(callback)
+      scheduled = callback
+    end
 
+    assert.are.same({}, Status.cli())
+    assert.is_function(scheduled)
+    scheduled()
     assert.are.same({
       {
         id = "claude",

@@ -11,7 +11,7 @@ Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI 
 | CLI API | `lua/ajans/cli/init.lua` | Public API: `select`, `show`, `toggle`, `focus`, `hide`, `close`, `send`, `prompt`, `render`. |
 | Tool registry | `lua/ajans/cli/tool.lua`, `aj/cli/*.lua` | Load default tool configs from runtime path and merge user overrides. |
 | State | `lua/ajans/cli/state.lua` | Combine installed tools, running sessions, attached sessions, and user filters. |
-| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua`, `lua/ajans/cli/session/herdr.lua` | Backend selection plus tmux/Herdr discovery, start, attach, detach, send, submit, and dump adapters. |
+| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua`, `lua/ajans/cli/session/herdr.lua`, `lua/ajans/cli/session/herdr/*.lua` | Backend selection and lifecycle contracts; focused Herdr transport, discovery, and layout modules. |
 | Terminal wrapper | `lua/ajans/cli/terminal.lua`, `lua/ajans/cli/scrollback.lua` | Neovim terminal window/buffer lifecycle, keymaps, send queue, mode restore, scrollback. |
 | Context | `lua/ajans/cli/context/*.lua`, `lua/ajans/text.lua`, `lua/ajans/treesitter.lua` | Render prompt variables into strings with optional highlighting metadata. |
 | Pickers | `lua/ajans/cli/picker/*.lua`, `lua/ajans/cli/ui/*.lua` | Tool/prompt/file/buffer selection through `vim.ui.select`, snacks, Telescope, or fzf-lua. |
@@ -63,10 +63,11 @@ Ajans resolves one active backend during session setup. Explicit `tmux` or `herd
 
 - New sessions get stable names from tool name plus cwd hash.
 - The tmux adapter discovers panes with `tmux list-panes` and inspects process trees with `ps`, `/proc`, and `lsof` where available.
-- The Herdr adapter takes an `api snapshot` on Herdr 0.7.2+ and composes the equivalent public list inventory on 0.7.0–0.7.1. It fetches every pane's process metadata with bounded concurrency and matches the same configured tool detectors. It keeps Herdr terminal, pane, tab, workspace, and process identities.
-- Herdr CLI calls inherit the selected namespace and use bounded execution, decoded JSON errors, and transactional cleanup for partially created workspaces, tabs, or panes.
+- The Herdr adapter takes an `api snapshot` on Herdr 0.7.2+ and composes the equivalent public list inventory on 0.7.0–0.7.1. Stable Ajans names and Herdr labels classify known tools first; bounded process inspection is reserved for unmatched custom tools. It keeps Herdr terminal, pane, tab, workspace, and available process identities.
+- Herdr control calls use bounded execution and decoded JSON errors. Sensitive launch and prompt payloads use Herdr's local newline-delimited JSON socket instead of process arguments. Workspace, tab, pane, and nested-layout changes use validated transactional cleanup.
 - If Neovim is hosted by the selected backend, `window` maps to a tmux window or Herdr tab and `split` maps to a native pane split.
-- Embedded terminal sessions attach to the persistent backend resource and are tracked as `terminal: ...` wrappers. Stable backend identity removes duplicate parent/wrapper entries.
+- Backend `start()` returns `(terminal_command, started)`: `started` is the authoritative creation outcome, while an optional command requests a Neovim terminal wrapper. Discovery returns `(sessions, authoritative)`, so transient scans retain known sessions and authoritative scans remove stale wrappers.
+- Embedded terminal sessions attach to the persistent backend resource and are tracked as `terminal: ...` wrappers. Stable backend identity removes duplicate parent/wrapper entries and reconciles server restarts.
 
 ## Terminal wrapper
 

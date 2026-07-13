@@ -193,24 +193,40 @@ function M:_drain_input()
   end
   self._sending = true
 
-  local function complete()
+  local function complete(ok)
+    if ok and item.kind == "text" then
+      self._last_send_ok = true
+    elseif not ok then
+      self._last_send_ok = false
+      self._input_queue = {}
+    end
     self._sending = false
     self:_drain_input()
   end
   if item.kind == "submit" then
-    Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Enter" })
-    complete()
+    if self._last_send_ok == false then
+      self._last_send_ok = nil
+      complete(false)
+      return
+    end
+    self._last_send_ok = nil
+    complete(Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Enter" }) ~= nil)
     return
   end
 
   local function send_text()
     local buffer = "ajans-" .. self.tmux_pane_id
-    Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = item.text })
-    Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", self.tmux_pane_id })
-    complete()
+    if Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = item.text }) == nil then
+      complete(false)
+      return
+    end
+    complete(Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", self.tmux_pane_id }) ~= nil)
   end
   if self.tool.mux_focus then
-    Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Escape", "[", "I" })
+    if Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Escape", "[", "I" }) == nil then
+      complete(false)
+      return
+    end
     vim.defer_fn(send_text, 50)
   else
     send_text()

@@ -166,6 +166,7 @@ local capability_names = {
   "creation",
   "lifecycle",
   "input",
+  "input_failure_safety",
   "display",
   "scrollback",
   "existing_sessions",
@@ -250,6 +251,22 @@ local adapters = {
       deferred()
       assert.are.equal("line one\nline two", calls[2].opts.stdin)
       assert.are.same({ "tmux", "send-keys", "-t", "%1", "Enter" }, calls[4].cmd)
+    end,
+    input_failure_safety = function()
+      setup_config("tmux")
+      local calls = {}
+      local session = tmux_session()
+      Util.exec = function(cmd)
+        calls[#calls + 1] = vim.deepcopy(cmd)
+        return cmd[2] == "load-buffer" and {} or nil
+      end
+
+      session:send("repository context")
+      session:submit()
+
+      assert.are.equal(2, #calls)
+      assert.are.equal("load-buffer", calls[1][2])
+      assert.are.equal("paste-buffer", calls[2][2])
     end,
     display = function()
       setup_config("tmux", { create = "split" })
@@ -505,6 +522,19 @@ local adapters = {
       assert.are.same({ "herdr", "pane", "send-keys", "pane-1", "escape", "[", "I" }, calls[1])
       assert.are.same({ "herdr", "agent", "send", "term-1", "line one\nline two" }, calls[2])
       assert.are.same({ "herdr", "pane", "send-keys", "pane-1", "enter" }, calls[3])
+    end,
+    input_failure_safety = function()
+      setup_config("herdr")
+      local calls = {}
+      local session = herdr_session()
+      Herdr._run = function(cmd)
+        calls[#calls + 1] = vim.deepcopy(cmd)
+        return cmd[3] == "send" and completed("", 1, "agent disappeared") or completed()
+      end
+
+      assert.is_false(session:send("repository context"))
+      assert.is_false(session:submit())
+      assert.are.equal(1, #calls)
     end,
     display = function()
       setup_config("herdr")

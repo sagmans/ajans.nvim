@@ -1,5 +1,6 @@
 local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
+local Discovery = require("ajans.cli.session.herdr.discovery")
 local Layout = require("ajans.cli.session.herdr.layout")
 local Util = require("ajans.util")
 
@@ -25,10 +26,6 @@ M.PROCESS_INFO_CONCURRENCY = 8
 M.SEND_CHUNK_BYTES = 24 * 1024
 
 local AGENT_PREFIX = "ajans:"
-local LABEL_ALIASES = {
-  ["github-copilot"] = "copilot",
-  ["github copilot"] = "copilot",
-}
 
 ---@param cmd string[]
 ---@param opts? vim.SystemOpts
@@ -394,157 +391,14 @@ function M.ensure_server()
   return true
 end
 
----@param label string?
----@return string?
-function M.tool_name_for_label(label)
-  if type(label) ~= "string" then
-    return
-  end
-  local normalized = label:lower():gsub("^%s+", ""):gsub("%s+$", "")
-  local name = LABEL_ALIASES[normalized] or normalized:gsub("[%s%-]+", "_")
-  return Config.cli.tools[name] ~= nil and name or nil
-end
-
----@param name string?
----@return string?
-local function tool_name_for_owned_agent(name)
-  if type(name) ~= "string" then
-    return
-  end
-  local tool = name:match("^" .. AGENT_PREFIX .. "([^%s]+)")
-  return tool and Config.cli.tools[tool] ~= nil and tool or nil
-end
-
----@param values integer[]
----@param value any
-local function add_pid(values, value)
-  value = tonumber(value)
-  if value and not vim.tbl_contains(values, value) then
-    values[#values + 1] = value
-  end
-end
-
----@param process_info table?
----@return integer[]
-local function process_pids(process_info)
-  local pids = {}
-  if type(process_info) ~= "table" then
-    return pids
-  end
-  add_pid(pids, process_info.shell_pid)
-  add_pid(pids, process_info.foreground_process_group_id)
-  for _, process in ipairs(process_info.foreground_processes or {}) do
-    add_pid(pids, process.pid)
-  end
-  return pids
-end
-
----@param process table
----@return ajans.cli.Proc
-local function to_proc(process)
-  local cmd = process.cmdline
-  if type(cmd) ~= "string" or cmd == "" then
-    cmd = type(process.argv) == "table" and #process.argv > 0 and table.concat(process.argv, " ")
-      or process.argv0
-      or process.name
-      or ""
-  end
-  return {
-    pid = tonumber(process.pid) or 0,
-    ppid = 0,
-    cmd = cmd,
-    cwd = process.cwd,
-  }
-end
+M.tool_name_for_label = Discovery.tool_name_for_label
+local process_pids = Discovery.process_pids
+local to_proc = Discovery.to_proc
 
 ---@param pane table
 ---@return table?
 local function pane_process_info(pane)
-  local result, err = M.request({ "pane", "process-info", "--pane", pane.pane_id }, { notify = false })
-  if type(result) ~= "table" then
-    if err and not err:find("pane_not_found", 1, true) and not err:find("not found", 1, true) then
-      Util.error(("Failed to inspect Herdr pane `%s`: %s"):format(pane.pane_id, err))
-    end
-    return
-  end
-  if type(result.process_info) ~= "table" then
-    Util.error(("Herdr process-info response for pane `%s` is missing `process_info`"):format(pane.pane_id))
-    return
-  end
-  return result.process_info
-end
-
----@param panes table[]
----@return table<string,table>, boolean
-local function pane_process_infos(panes)
-  local commands = {}
-  for _, pane in ipairs(panes) do
-    commands[#commands + 1] = herdr_cmd({ "pane", "process-info", "--pane", pane.pane_id })
-  end
-  local ok, results = pcall(M._run_many, commands)
-  if not ok then
-    Util.error("Failed to inspect Herdr panes: " .. tostring(results))
-    return {}, false
-  end
-  local infos = {}
-  local failures = 0
-  local first_failure
-  for index, pane in ipairs(panes) do
-    local result = results[index]
-    local value = result and result.code == 0 and decode(result.stdout) or nil
-    local info = value and value.result and value.result.process_info
-    if type(info) == "table" then
-      infos[pane.pane_id] = info
-    elseif result and result.code ~= 0 then
-      local err = error_message(result)
-      if not err:find("pane_not_found", 1, true) and not err:find("not found", 1, true) then
-        failures = failures + 1
-        first_failure = first_failure or ("pane `%s`: %s"):format(pane.pane_id, err)
-      end
-    else
-      failures = failures + 1
-      first_failure = first_failure or ("pane `%s`: malformed response"):format(pane.pane_id)
-    end
-  end
-  if failures > 0 then
-    Util.error(("Failed to inspect %d Herdr pane(s); first failure: %s"):format(failures, first_failure))
-  end
-  return infos, failures == 0
-end
-
----@param pane table
----@param agent table?
----@param tools table<string,ajans.cli.Tool>
----@param tool_names string[]
----@param info table?
----@return ajans.cli.Tool?, table?, ajans.cli.Proc?
-local function match_pane(pane, agent, tools, tool_names, info)
-  local name = tool_name_for_owned_agent(agent and agent.name)
-  if name then
-    return tools[name], info, nil
-  end
-  local labels = {
-    agent and agent.agent,
-    agent and agent.display_agent,
-    pane.agent,
-    pane.display_agent,
-  }
-  for index = 1, 4 do
-    name = M.tool_name_for_label(labels[index])
-    if name then
-      return tools[name], info, nil
-    end
-  end
-
-  for _, process in ipairs((info and info.foreground_processes) or {}) do
-    local proc = to_proc(process)
-    for _, tool_name in ipairs(tool_names) do
-      if tools[tool_name]:is_proc(proc) then
-        return tools[tool_name], info, proc
-      end
-    end
-  end
-  return nil, info, nil
+  return Discovery.pane_process_info(M, pane)
 end
 
 ---@return boolean
@@ -553,170 +407,14 @@ function M.supports_snapshot()
   return version ~= nil and M.version_at_least(version, M.SNAPSHOT_VERSION)
 end
 
----@param resource "workspace"|"tab"|"pane"|"agent"
----@param field "workspaces"|"tabs"|"panes"|"agents"
----@return table[]?, string?
-local function legacy_list(resource, field)
-  local result, err = M.request({ resource, "list" }, { stopped_ok = true })
-  if not result then
-    return nil, err
-  end
-  if type(result[field]) ~= "table" then
-    Util.error(("Herdr %s list response is missing `%s`"):format(resource, field))
-    return nil, "malformed legacy inventory"
-  end
-  return result[field]
-end
-
----@return table?, string?
-local function legacy_snapshot()
-  local snapshot = {}
-  for _, item in ipairs({
-    { resource = "workspace", field = "workspaces" },
-    { resource = "tab", field = "tabs" },
-    { resource = "pane", field = "panes" },
-    { resource = "agent", field = "agents" },
-  }) do
-    local values, err = legacy_list(item.resource, item.field)
-    if not values then
-      return nil, err
-    end
-    snapshot[item.field] = values
-  end
-  return snapshot
-end
-
 ---@return table?, string?
 function M.snapshot()
-  if not M.supports_snapshot() then
-    return legacy_snapshot()
-  end
-  local result, err = M.request({ "api", "snapshot" }, { stopped_ok = true })
-  if not result then
-    return nil, err
-  end
-  if type(result.snapshot) ~= "table" then
-    Util.error("Herdr snapshot response is missing `snapshot`")
-    return nil, "malformed snapshot"
-  end
-  for _, field in ipairs({ "workspaces", "tabs", "panes", "agents" }) do
-    if type(result.snapshot[field]) ~= "table" then
-      Util.error(("Herdr snapshot response is missing `%s`"):format(field))
-      return nil, "malformed snapshot"
-    end
-  end
-  return result.snapshot
+  return Discovery.snapshot(M)
 end
 
 ---@return ajans.cli.session.State[], boolean
 function M.sessions()
-  local snapshot, err = M.snapshot()
-  if not snapshot then
-    return {}, err == "stopped"
-  end
-
-  local malformed_inventory = false
-  local agents = {}
-  for _, agent in ipairs(snapshot.agents) do
-    if agent.pane_id then
-      agents[agent.pane_id] = agent
-    else
-      malformed_inventory = true
-    end
-  end
-  local workspaces = {}
-  for _, workspace in ipairs(snapshot.workspaces) do
-    if workspace.workspace_id then
-      workspaces[workspace.workspace_id] = workspace
-    else
-      malformed_inventory = true
-    end
-  end
-  local tabs = {}
-  for _, tab in ipairs(snapshot.tabs) do
-    if tab.tab_id then
-      tabs[tab.tab_id] = tab
-    else
-      malformed_inventory = true
-    end
-  end
-
-  local panes = {}
-  local malformed_pane = false
-  for _, pane in ipairs(snapshot.panes) do
-    if pane.pane_id and pane.terminal_id and pane.workspace_id and pane.tab_id then
-      panes[#panes + 1] = pane
-    else
-      malformed_pane = true
-    end
-  end
-
-  local tools = Config.tools()
-  local tool_names = vim.tbl_keys(tools)
-  table.sort(tool_names)
-
-  local classified = {}
-  local unmatched = {}
-  for _, pane in ipairs(panes) do
-    local tool = match_pane(pane, agents[pane.pane_id], tools, tool_names)
-    if tool then
-      classified[pane.pane_id] = tool
-    else
-      unmatched[#unmatched + 1] = pane
-    end
-  end
-  -- Stable Ajans names and public Herdr labels are authoritative. Process
-  -- inspection is reserved for otherwise unclassified custom tools.
-  local process_infos, process_complete = pane_process_infos(unmatched)
-  local sessions = {}
-  for _, pane in ipairs(panes) do
-    local agent = agents[pane.pane_id]
-    local process_info = process_infos[pane.pane_id]
-    local tool, proc
-    if classified[pane.pane_id] then
-      tool = classified[pane.pane_id]
-    else
-      tool, _, proc = match_pane(pane, agent, tools, tool_names, process_info)
-    end
-    if tool then
-      local cwd = proc and proc.cwd
-        or agent and (agent.foreground_cwd or agent.cwd)
-        or pane.foreground_cwd
-        or pane.cwd
-        or vim.uv.cwd()
-      local name = agent and agent.name
-      local placement
-      if name and workspaces[pane.workspace_id] and workspaces[pane.workspace_id].label == name then
-        placement = "workspace"
-      elseif name and tabs[pane.tab_id] and tabs[pane.tab_id].label == name then
-        placement = "tab"
-      elseif name and name:find("^" .. AGENT_PREFIX) then
-        placement = "split"
-      end
-      sessions[#sessions + 1] = {
-        id = "herdr " .. pane.terminal_id,
-        identity = "herdr:" .. pane.terminal_id,
-        cwd = cwd,
-        tool = tool,
-        pids = process_pids(process_info),
-        mux_session = pane.workspace_id,
-        herdr_terminal_id = pane.terminal_id,
-        herdr_pane_id = pane.pane_id,
-        herdr_workspace_id = pane.workspace_id,
-        herdr_tab_id = pane.tab_id,
-        herdr_agent = agent ~= nil,
-        herdr_name = name,
-        herdr_placement = placement,
-      }
-    end
-  end
-  if malformed_pane then
-    Util.error("Herdr snapshot contains a pane without stable terminal, pane, workspace, or tab IDs")
-  end
-  if malformed_inventory then
-    Util.error("Herdr snapshot contains a workspace, tab, or agent without a stable ID")
-  end
-  return sessions, process_complete and not malformed_pane and not malformed_inventory
+  return Discovery.sessions(M)
 end
 
 function M:init()

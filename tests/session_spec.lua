@@ -497,6 +497,42 @@ describe("session mux", function()
     assert.are.same({}, Session._attached)
   end)
 
+  it("reconciles stable identities after a backend restart", function()
+    local detached = false
+    local replacement = {
+      id = "herdr term-2",
+      identity = "herdr:term-2",
+      tool = test_tool(),
+      cwd = vim.uv.cwd(),
+    }
+    Session.backends = {}
+    Session.register("herdr", {
+      sessions = function()
+        return { replacement }, true
+      end,
+    })
+    Session.backend = "herdr"
+    Session._attached["terminal: herdr:term-1"] = {
+      id = "terminal: herdr:term-1",
+      backend = "terminal",
+      mux_backend = "herdr",
+      mux_identity = "herdr:term-1",
+      is_running = function()
+        return true
+      end,
+      detach = function()
+        detached = true
+      end,
+    }
+
+    local sessions = Session.sessions()
+
+    assert.are.equal(1, #sessions)
+    assert.are.equal("herdr:term-2", sessions[1].identity)
+    assert.is_true(detached)
+    assert.are.same({}, Session._attached)
+  end)
+
   it("retains an attached external session across a transient discovery failure", function()
     local detached = false
     local external = {

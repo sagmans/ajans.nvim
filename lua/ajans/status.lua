@@ -11,6 +11,7 @@ local M = {}
 
 local cli_sessions = {} ---@type table<string, ajans.cli.Status>
 local cli_last_update = 0
+local cli_update_pending = false
 
 local function normalize_cli_session(id, session)
   local tool = session.tool
@@ -35,6 +36,18 @@ local function update_cli_status()
   for id, session in pairs(Session.attached()) do
     cli_sessions[id] = normalize_cli_session(id, session)
   end
+  cli_last_update = vim.uv.now()
+end
+
+local function schedule_cli_update()
+  if cli_update_pending then
+    return
+  end
+  cli_update_pending = true
+  vim.schedule(function()
+    cli_update_pending = false
+    update_cli_status()
+  end)
 end
 
 function M.setup()
@@ -52,10 +65,10 @@ end
 function M.cli()
   local now = vim.uv.now()
   if now - cli_last_update > 5000 then
+    -- Statusline renders must stay non-blocking even when a mux server stalls.
+    -- Refresh the cache after returning the current snapshot.
     cli_last_update = now
-    -- update periodically to detect sessions where `is_running()` returns false
-    -- can happen when an external process stopped
-    update_cli_status()
+    schedule_cli_update()
   end
   return vim.tbl_values(cli_sessions)
 end
