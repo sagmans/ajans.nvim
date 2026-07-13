@@ -1,5 +1,6 @@
 local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
+local Layout = require("ajans.cli.session.herdr.layout")
 local Util = require("ajans.util")
 
 ---@class ajans.cli.muxer.Herdr: ajans.cli.Session
@@ -932,105 +933,86 @@ function M:start_tab()
   return nil, true
 end
 
----@param outer table
----@param inner table
----@return boolean
-local function contains(outer, inner)
-  return inner.x >= outer.x
-    and inner.y >= outer.y
-    and inner.x + inner.width <= outer.x + outer.width
-    and inner.y + inner.height <= outer.y + outer.height
-end
-
----@param layout table
----@param pane_id string
----@param direction "right"|"down"
----@return table?
-local function containing_split(layout, pane_id, direction)
-  local pane
-  for _, candidate in ipairs(layout.panes or {}) do
-    if candidate.pane_id == pane_id then
-      pane = candidate
-      break
-    end
-  end
-  if not pane or type(pane.rect) ~= "table" then
-    return
-  end
-  local best
-  local best_area
-  for _, split in ipairs(layout.splits or {}) do
-    if split.direction == direction and type(split.rect) == "table" and contains(split.rect, pane.rect) then
-      local area = split.rect.width * split.rect.height
-      if not best_area or area < best_area then
-        best = split
-        best_area = area
-      end
-    end
-  end
-  return best
-end
-
 ---@param pane_id string
 ---@param direction "right"|"down"
 ---@return boolean
 function M:size_split(pane_id, direction)
   local result = M.request({ "pane", "layout", "--pane", pane_id })
   local layout = result and result.layout
-  local split = type(layout) == "table" and containing_split(layout, pane_id, direction) or nil
-  if not split then
+  local valid, layout_error = Layout.validate(layout)
+  if not valid then
+    Util.error("Herdr pane layout is invalid: " .. layout_error)
+    return false
+  end
+  local pane = Layout.pane(layout, pane_id)
+  local split = Layout.containing_split(layout, pane_id, direction)
+  if not pane or not split then
     Util.error("Herdr pane layout did not include the new split")
     return false
   end
+
   local size = Config.cli.mux.split.size
   local desired = size
+  local dimension = direction == "right" and split.rect.width or split.rect.height
   if size > 1 then
-    local dimension = direction == "right" and split.rect.width or split.rect.height
-    if not dimension or dimension <= 0 then
-      Util.error("Herdr pane layout returned an invalid split size")
-      return false
-    end
     desired = size / dimension
-    if desired < 0.1 or desired > 0.9 then
-      Util.error(("Herdr split size %d cells falls outside the shared 10%%-90%% layout range"):format(size))
-      return false
-    end
   end
-  desired = math.max(0.1, math.min(0.9, desired))
-  local current = 1 - split.ratio
+  if desired < 0.1 or desired > 0.9 then
+    Util.error(("Herdr split size %s falls outside the supported 10%%-90%% layout range"):format(size))
+    return false
+  end
+
+  local current = Layout.share(split, pane)
   local amount = math.abs(desired - current)
   if amount < 0.000001 then
     return true
   end
-  local resize_direction
-  if desired > current then
-    resize_direction = direction == "right" and "left" or "up"
-  else
-    resize_direction = direction
+  local desired_ratio = Layout.is_second(split, pane) and 1 - desired or desired
+  local ratio_delta = desired_ratio - split.ratio
+  local resize_direction = ratio_delta > 0 and (direction == "right" and "right" or "down")
+    or (direction == "right" and "left" or "up")
+  local target_pane = Layout.resize_target(layout, split.id, pane_id, resize_direction)
+  if not target_pane then
+    Util.error("Herdr cannot resize the new pane without targeting a different split boundary")
+    return false
   end
+
   local resize = M.request({
     "pane",
     "resize",
     "--pane",
-    pane_id,
+    target_pane,
     "--direction",
     resize_direction,
     "--amount",
-    ("%.6g"):format(amount),
+    ("%.6g"):format(math.abs(ratio_delta)),
   })
-  local final_layout = resize and resize.resize and resize.resize.layout
-  local final_split = type(final_layout) == "table" and containing_split(final_layout, pane_id, direction) or nil
-  if not final_split then
-    Util.error("Herdr pane resize response did not include the resized split layout")
+  if not resize or type(resize.resize) ~= "table" then
     return false
   end
-  local actual = 1 - final_split.ratio
-  local tolerance = size > 1 and (1 / (direction == "right" and split.rect.width or split.rect.height)) or 0.01
+  if resize.resize.changed == false then
+    Util.error("Herdr reported that the requested pane resize made no layout change")
+    return false
+  end
+  local final_layout = resize.resize.layout
+  local final_valid, final_error = Layout.validate(final_layout)
+  if not final_valid then
+    Util.error("Herdr pane resize returned an invalid layout: " .. final_error)
+    return false
+  end
+  local final_split = Layout.split(final_layout, split.id)
+  local final_pane = Layout.pane(final_layout, pane_id)
+  if not final_split or not final_pane then
+    Util.error("Herdr pane resize response did not include the resized split and pane")
+    return false
+  end
+  local actual = Layout.share(final_split, final_pane)
+  local tolerance = size > 1 and (1 / dimension) or 0.01
   if math.abs(actual - desired) > tolerance then
     Util.error(("Herdr resized pane to %.3f instead of configured %.3f"):format(actual, desired))
     return false
   end
-  return resize.resize.changed ~= false
+  return true
 end
 
 ---@return nil

@@ -303,7 +303,7 @@ local adapters = {
       assert.are.equal(1, #sessions)
       assert.are.equal("contract", sessions[1].tool.name)
       assert.are.equal("/tmp/contract", sessions[1].cwd)
-      assert.are.same({ 101, 102, 103 }, sessions[1].pids)
+      assert.are.same({}, sessions[1].pids)
     end,
     stable_identity = function()
       setup_config("herdr")
@@ -436,7 +436,12 @@ local adapters = {
             layout = {
               panes = { { pane_id = "pane-split", rect = { x = 50, y = 0, width = 50, height = 40 } } },
               splits = {
-                { direction = "right", ratio = 0.5, rect = { x = 0, y = 0, width = 100, height = 40 } },
+                {
+                  id = "immediate",
+                  direction = "right",
+                  ratio = 0.5,
+                  rect = { x = 0, y = 0, width = 100, height = 40 },
+                },
               },
             },
           })
@@ -448,7 +453,12 @@ local adapters = {
               layout = {
                 panes = { { pane_id = "pane-split", rect = { x = 20, y = 0, width = 80, height = 40 } } },
                 splits = {
-                  { direction = "right", ratio = 0.2, rect = { x = 0, y = 0, width = 100, height = 40 } },
+                  {
+                    id = "immediate",
+                    direction = "right",
+                    ratio = 0.2,
+                    rect = { x = 0, y = 0, width = 100, height = 40 },
+                  },
                 },
               },
             },

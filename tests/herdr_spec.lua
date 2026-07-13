@@ -1135,6 +1135,7 @@ describe("herdr backend", function()
       split_direction = "right",
       dimension = { width = 120, height = 40 },
       pane = { x = 60, y = 0, width = 60, height = 40 },
+      final_pane = { x = 36, y = 0, width = 84, height = 40 },
       resize_direction = "left",
       amount = "0.2",
       final_ratio = 0.3,
@@ -1147,6 +1148,7 @@ describe("herdr backend", function()
       split_direction = "right",
       dimension = { width = 100, height = 40 },
       pane = { x = 50, y = 0, width = 50, height = 40 },
+      final_pane = { x = 80, y = 0, width = 20, height = 40 },
       resize_direction = "right",
       amount = "0.3",
       final_ratio = 0.8,
@@ -1159,6 +1161,7 @@ describe("herdr backend", function()
       split_direction = "down",
       dimension = { width = 100, height = 40 },
       pane = { x = 0, y = 20, width = 100, height = 20 },
+      final_pane = { x = 0, y = 30, width = 100, height = 10 },
       resize_direction = "down",
       amount = "0.25",
       final_ratio = 0.75,
@@ -1218,7 +1221,7 @@ describe("herdr backend", function()
             resize = {
               changed = true,
               layout = {
-                panes = { { pane_id = "pane-split", rect = case.pane } },
+                panes = { { pane_id = "pane-split", rect = case.final_pane } },
                 splits = {
                   {
                     id = "immediate",
@@ -1248,7 +1251,131 @@ describe("herdr backend", function()
     end)
   end
 
-  it("rolls back when Herdr cannot achieve the configured split size", function()
+  for _, case in ipairs({
+    { name = "already-sized no-op", size = 0.5, resize = nil, expected = true },
+    {
+      name = "changed=false response",
+      size = 0.7,
+      resize = {
+        changed = false,
+        layout = {
+          panes = { { pane_id = "pane-split", rect = { x = 30, y = 0, width = 70, height = 40 } } },
+          splits = {
+            { id = "immediate", direction = "right", ratio = 0.3, rect = { x = 0, y = 0, width = 100, height = 40 } },
+          },
+        },
+      },
+      expected = false,
+    },
+    { name = "partial resize response", size = 0.7, resize = { changed = true }, expected = false },
+  }) do
+    it("handles a " .. case.name, function()
+      setup_config({ cli = { mux = { backend = "herdr", split = { size = case.size } } } })
+      local resize_calls = 0
+      local session = new_session()
+      Herdr._run = function(cmd)
+        if cmd[3] == "layout" then
+          return success({
+            layout = {
+              panes = { { pane_id = "pane-split", rect = { x = 50, y = 0, width = 50, height = 40 } } },
+              splits = {
+                {
+                  id = "immediate",
+                  direction = "right",
+                  ratio = 0.5,
+                  rect = { x = 0, y = 0, width = 100, height = 40 },
+                },
+              },
+            },
+          })
+        elseif cmd[3] == "resize" then
+          resize_calls = resize_calls + 1
+          return success({ resize = case.resize })
+        end
+        error("unexpected command")
+      end
+      Util.error = function() end
+
+      assert.are.equal(case.expected, session:size_split("pane-split", "right"))
+      assert.are.equal(case.resize and 1 or 0, resize_calls)
+    end)
+  end
+
+  it("targets an inner split through its sibling pane", function()
+    setup_config({ cli = { mux = { backend = "herdr", split = { size = 0.2 } } } })
+    local resize_command
+    local session = new_session()
+    Herdr._run = function(cmd)
+      if cmd[3] == "layout" then
+        return success({
+          layout = {
+            panes = {
+              { pane_id = "sibling", rect = { x = 0, y = 0, width = 25, height = 40 } },
+              { pane_id = "pane-split", rect = { x = 25, y = 0, width = 25, height = 40 } },
+              { pane_id = "outer-sibling", rect = { x = 50, y = 0, width = 50, height = 40 } },
+            },
+            splits = {
+              { id = "outer", direction = "right", ratio = 0.5, rect = { x = 0, y = 0, width = 100, height = 40 } },
+              { id = "immediate", direction = "right", ratio = 0.5, rect = { x = 0, y = 0, width = 50, height = 40 } },
+            },
+          },
+        })
+      elseif cmd[3] == "resize" then
+        resize_command = vim.deepcopy(cmd)
+        return success({
+          resize = {
+            changed = true,
+            layout = {
+              panes = {
+                { pane_id = "sibling", rect = { x = 0, y = 0, width = 40, height = 40 } },
+                { pane_id = "pane-split", rect = { x = 40, y = 0, width = 10, height = 40 } },
+                { pane_id = "outer-sibling", rect = { x = 50, y = 0, width = 50, height = 40 } },
+              },
+              splits = {
+                { id = "outer", direction = "right", ratio = 0.5, rect = { x = 0, y = 0, width = 100, height = 40 } },
+                {
+                  id = "immediate",
+                  direction = "right",
+                  ratio = 0.8,
+                  rect = { x = 0, y = 0, width = 50, height = 40 },
+                },
+              },
+            },
+          },
+        })
+      end
+      error("unexpected command")
+    end
+
+    assert.is_true(session:size_split("pane-split", "right"))
+    assert_pair(resize_command, "--pane", "sibling")
+    assert_pair(resize_command, "--direction", "right")
+  end)
+
+  it("rejects malformed layout geometry before resizing", function()
+    local calls = 0
+    local errors = {}
+    local session = new_session()
+    Herdr._run = function(cmd)
+      calls = calls + 1
+      assert.are.equal("layout", cmd[3])
+      return success({
+        layout = {
+          panes = { { pane_id = "pane-split", rect = { x = 0, y = 0, height = 40 } } },
+          splits = {},
+        },
+      })
+    end
+    Util.error = function(message)
+      errors[#errors + 1] = message
+    end
+
+    assert.is_false(session:size_split("pane-split", "right"))
+    assert.are.equal(1, calls)
+    assert.matches("invalid", errors[1])
+  end)
+
+  it("rolls back after a malformed resize layout", function()
     setup_config({ cli = { mux = { backend = "herdr", create = "split", split = { size = 0.8 } } } })
     vim.env.HERDR_ENV = "1"
     vim.env.HERDR_WORKSPACE_ID = "host-workspace"
@@ -1277,7 +1404,9 @@ describe("herdr backend", function()
           type = "pane_layout",
           layout = {
             panes = { { pane_id = "pane-split", rect = { x = 50, y = 0, width = 50, height = 40 } } },
-            splits = { { direction = "right", ratio = 0.5, rect = { x = 0, y = 0, width = 100, height = 40 } } },
+            splits = {
+              { id = "immediate", direction = "right", ratio = 0.5, rect = { x = 0, y = 0, width = 100, height = 40 } },
+            },
           },
         })
       elseif cmd[3] == "resize" then
@@ -1287,7 +1416,9 @@ describe("herdr backend", function()
             changed = true,
             layout = {
               panes = { { pane_id = "pane-split", rect = { x = 10, y = 0, width = 90, height = 40 } } },
-              splits = { { direction = "right", ratio = 0.1, rect = { x = 0, y = 0, width = 100, height = 40 } } },
+              splits = {
+                { id = "immediate", direction = "right", ratio = 0.1, rect = { x = 0, y = 0, height = 40 } },
+              },
             },
           },
         })
@@ -1317,7 +1448,7 @@ describe("herdr backend", function()
         layout = {
           panes = { { pane_id = "pane-split", rect = { x = 50, y = 0, width = 50, height = 40 } } },
           splits = {
-            { direction = "right", ratio = 0.5, rect = { x = 0, y = 0, width = 100, height = 40 } },
+            { id = "immediate", direction = "right", ratio = 0.5, rect = { x = 0, y = 0, width = 100, height = 40 } },
           },
         },
       })
@@ -1328,7 +1459,7 @@ describe("herdr backend", function()
 
     assert.is_false(session:size_split("pane-split", "right"))
     assert.are.equal(1, #calls)
-    assert.matches("outside the shared", errors[1])
+    assert.matches("outside the supported", errors[1])
   end)
 
   it("closes a pane returned by a malformed split launch response", function()
