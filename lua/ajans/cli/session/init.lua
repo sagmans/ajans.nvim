@@ -34,7 +34,7 @@ B.priority = 0
 
 --- Send text to the session
 ---@param text string
-function B:send(text)
+function B:send(_text)
   error("Backend:send() not implemented")
 end
 

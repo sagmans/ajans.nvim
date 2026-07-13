@@ -13,7 +13,7 @@ local defaults = {
       --- This is run when a new terminal is created, before starting it.
       --- Here you can change window options `terminal.opts`.
       ---@param terminal ajans.cli.Terminal
-      config = function(terminal) end,
+      config = function(_terminal) end,
       wo = {}, ---@type vim.wo
       bo = {}, ---@type vim.bo
       layout = "right", ---@type "float"|"left"|"bottom"|"top"|"right"

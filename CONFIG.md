@@ -34,7 +34,7 @@ local defaults = {
       --- This is run when a new terminal is created, before starting it.
       --- Here you can change window options `terminal.opts`.
       ---@param terminal ajans.cli.Terminal
-      config = function(terminal) end,
+      config = function(_terminal) end,
       wo = {}, ---@type vim.wo
       bo = {}, ---@type vim.bo
       layout = "right", ---@type "float"|"left"|"bottom"|"top"|"right"
@@ -87,11 +87,11 @@ local defaults = {
       create = "split", ---@type "terminal"|"window"|"split"
       split = {
         vertical = true, -- vertical or horizontal split
-        size = 0.5, -- fraction clamped to 0.1-0.9 (<= 1), or cells within that layout range (> 1)
+        size = 0.5, -- fraction (<= 1), or cells (> 1); each backend validates supported bounds
       },
       -- max lines to capture when dumping a multiplexer pane for scrollback support
       -- more lines means slower loading of the scrollback
-      dump = 1000,
+      dump = 2000,
     },
     --- Actual cli tool config is loaded from the runtime path `aj/cli/{tool}.lua` and merged with the config below.
     --- For default configs, see https://github.com/sagmans/ajans.nvim/tree/main/aj/cli
