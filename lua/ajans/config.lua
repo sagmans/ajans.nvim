@@ -67,11 +67,11 @@ local defaults = {
       create = "split", ---@type "terminal"|"window"|"split"
       split = {
         vertical = true, -- vertical or horizontal split
-        size = 0.5, -- fraction clamped to 0.1-0.9 (<= 1), or cells within that layout range (> 1)
+        size = 0.5, -- fraction (<= 1), or cells (> 1); each backend validates supported bounds
       },
       -- max lines to capture when dumping a multiplexer pane for scrollback support
       -- more lines means slower loading of the scrollback
-      dump = 1000,
+      dump = 2000,
     },
     --- Actual cli tool config is loaded from the runtime path `aj/cli/{tool}.lua` and merged with the config below.
     --- For default configs, see https://github.com/sagmans/ajans.nvim/tree/main/aj/cli
@@ -153,9 +153,6 @@ local function normalize_mux(mux)
       ret[key] = vim.deepcopy(mux[key])
     end
   end
-  if type(ret.dump) == "number" then
-    ret.dump = math.max(1, math.min(1000, math.floor(ret.dump)))
-  end
   if ret.split ~= nil then
     if type(ret.split) == "table" then
       local split = {}
@@ -163,9 +160,6 @@ local function normalize_mux(mux)
         if ret.split[key] ~= nil then
           split[key] = ret.split[key]
         end
-      end
-      if type(split.size) == "number" and split.size <= 1 then
-        split.size = math.max(0.1, math.min(0.9, split.size))
       end
       ret.split = split
     else

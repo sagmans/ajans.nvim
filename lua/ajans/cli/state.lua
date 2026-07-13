@@ -151,7 +151,9 @@ function M.with(cb, opts)
       return
     end
     local ret, attached = M.attach(state, { show = opts.show, focus = opts.focus })
-    cb(ret, attached)
+    if ret and ret.attached then
+      cb(ret, attached)
+    end
   end)
 
   local filter_attached = Util.merge(opts.filter, { attached = true })

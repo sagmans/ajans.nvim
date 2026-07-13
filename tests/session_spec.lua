@@ -135,6 +135,13 @@ describe("session mux", function()
       usable = false,
       expected = "tmux",
     },
+    {
+      name = "sole unusable Herdr install",
+      configured = "auto",
+      herdr = true,
+      usable = false,
+      expected = "herdr",
+    },
     { name = "both installed compatibility tie", configured = "auto", tmux = true, herdr = true, expected = "tmux" },
     { name = "neither installed compatibility fallback", configured = "auto", expected = "tmux" },
   }) do
@@ -182,6 +189,20 @@ describe("session mux", function()
 
     assert.are.same({ "herdr", "tmux" }, vim.fn.sort(vim.tbl_keys(Session.backends)))
     assert.are.equal("tmux", Session.selected_backend())
+  end)
+
+  it("does not probe Herdr when tmux hosts Neovim", function()
+    setup_config({ cli = { mux = { backend = "auto" } } })
+    vim.env.HERDR_ENV = nil
+    vim.env.TMUX = "/tmp/tmux/default,1,0"
+    vim.fn.executable = function(name)
+      return (name == "herdr" or name == "tmux") and 1 or 0
+    end
+    Herdr.is_usable = function()
+      error("Herdr must not be probed")
+    end
+
+    assert.are.equal("tmux", Session.resolve_backend())
   end)
 
   it("resolves auto selection during session setup", function()
@@ -426,6 +447,56 @@ describe("session mux", function()
     assert.are.same({}, messages)
   end)
 
+  it("does not call State.with callbacks after attachment failure", function()
+    local original_get = State.get
+    local original_attach = State.attach
+    local called = false
+    State.get = function()
+      return { { tool = test_tool() } }
+    end
+    State.attach = function(state)
+      return state, false
+    end
+
+    State.with(function()
+      called = true
+    end)
+    vim.wait(100, function()
+      return called
+    end)
+
+    State.get = original_get
+    State.attach = original_attach
+    assert.is_false(called)
+  end)
+
+  it("detaches stale terminal wrappers after authoritative discovery", function()
+    local detached = false
+    Session.backends = {}
+    Session.register("herdr", {
+      sessions = function()
+        return {}, true
+      end,
+    })
+    Session.backend = "herdr"
+    Session._attached["terminal: herdr:term-1"] = {
+      id = "terminal: herdr:term-1",
+      backend = "terminal",
+      mux_backend = "herdr",
+      mux_identity = "herdr:term-1",
+      is_running = function()
+        return true
+      end,
+      detach = function()
+        detached = true
+      end,
+    }
+
+    assert.are.same({}, Session.sessions())
+    assert.is_true(detached)
+    assert.are.same({}, Session._attached)
+  end)
+
   it("retains an attached external session across a transient discovery failure", function()
     local detached = false
     local external = {
@@ -466,7 +537,8 @@ describe("session mux", function()
     function backend:start()
       self.mux_session = self.sid
       self.identity = "tmux:" .. self.sid
-      return { cmd = { "tmux", "new", "-A", "-s", self.sid } }
+      self.external = true
+      return { cmd = { "tmux", "new", "-A", "-s", self.sid } }, true
     end
     Session.backends = {}
     Session.register("tmux", backend)
@@ -496,6 +568,7 @@ describe("session mux", function()
     assert.are.equal("tmux", attached.mux_backend)
     assert.are.equal(parent.mux_session, attached.mux_session)
     assert.are.equal(parent.identity, attached.mux_identity)
+    assert.are.equal(parent.external, attached.external)
     assert.are.equal(parent, attached.parent)
     assert.are.equal(attached, Session._attached[attached.id])
     assert.are.same({ "tmux", "new", "-A", "-s", parent.sid }, terminal_opts.tool.cmd)
@@ -565,6 +638,7 @@ describe("session mux", function()
 
   for _, case in ipairs({
     { name = "vertical percent", split = { vertical = true, size = 0.5 }, flag = "-h", size = "50%" },
+    { name = "small vertical percent", split = { vertical = true, size = 0.05 }, flag = "-h", size = "5%" },
     { name = "horizontal cells", split = { vertical = false, size = 20 }, flag = "-v", size = "20" },
   }) do
     it("starts a tmux split inside tmux with " .. case.name, function()

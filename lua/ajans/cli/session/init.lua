@@ -54,9 +54,10 @@ function B:attach() end
 --- Detach from an existing session
 function B:detach() end
 
---- Start a new session
---- If the backend returns a Cmd, a new terminal session will be spawned
----@return ajans.cli.terminal.Cmd?
+--- Start a new session.
+--- The boolean reports creation success; a command requests a terminal wrapper.
+---@return ajans.cli.terminal.Cmd? cmd
+---@return boolean started
 function B:start()
   error("Backend:start() not implemented")
 end
@@ -112,6 +113,20 @@ function M.resolve_backend(opts)
       herdr = vim.fn.executable("herdr") == 1,
     }
   end
+  local herdr_host = opts.herdr_host
+  if herdr_host == nil then
+    herdr_host = vim.env.HERDR_ENV == "1"
+  end
+  local tmux_host = opts.tmux_host
+  if tmux_host == nil then
+    tmux_host = vim.env.TMUX ~= nil and vim.env.TMUX ~= ""
+  end
+  -- A plain tmux host wins before any Herdr subprocess runs. Nested Herdr hosts
+  -- still retain the documented higher precedence.
+  if tmux_host and not herdr_host and installed.tmux then
+    return "tmux"
+  end
+
   local herdr_usable = opts.herdr_usable
   if herdr_usable == nil then
     if opts.installed or opts.herdr_running ~= nil then
@@ -120,18 +135,8 @@ function M.resolve_backend(opts)
       herdr_usable = installed.herdr and require("ajans.cli.session.herdr").is_usable() or false
     end
   end
-
-  local herdr_host = opts.herdr_host
-  if herdr_host == nil then
-    herdr_host = vim.env.HERDR_ENV == "1"
-  end
   if herdr_host and herdr_usable then
     return "herdr"
-  end
-
-  local tmux_host = opts.tmux_host
-  if tmux_host == nil then
-    tmux_host = vim.env.TMUX ~= nil and vim.env.TMUX ~= ""
   end
   if tmux_host and installed.tmux then
     return "tmux"
@@ -144,7 +149,9 @@ function M.resolve_backend(opts)
   if herdr_running and herdr_usable then
     return "herdr"
   end
-  if herdr_usable and not installed.tmux then
+  if installed.herdr and not installed.tmux then
+    -- Select the sole installed backend even when validation failed so health
+    -- can report the actionable Herdr version/server error.
     return "herdr"
   end
   return "tmux"
@@ -238,16 +245,28 @@ function M.sessions()
     end
   end
 
-  for id, session in pairs(M._attached) do
-    local terminal = session.backend == "terminal" and session.mux_backend == name
-    local retained = authoritative == false and session.backend == name
-    if (terminal or retained) and session:is_running() then
-      if session.mux_identity and identities[session.mux_identity] then
-        session.parent = identities[session.mux_identity]
+  local function parent_for(session)
+    if session.mux_identity and identities[session.mux_identity] then
+      return identities[session.mux_identity]
+    end
+    for _, candidate in ipairs(ret) do
+      if
+        candidate.backend == name
+        and not vim.tbl_isempty(session.pids or {})
+        and Util.overlaps(candidate.pids or {}, session.pids or {})
+      then
+        return candidate
       end
-      if ids[id] then
-        Util.error("duplicate session id: " .. id)
-      else
+    end
+  end
+
+  for id, session in pairs(M._attached) do
+    if not ids[id] then
+      local terminal = session.backend == "terminal" and session.mux_backend == name
+      local parent = terminal and parent_for(session) or nil
+      local retained = authoritative == false and (terminal or session.backend == name)
+      if (parent or retained) and session:is_running() then
+        session.parent = parent or session.parent
         ret[#ret + 1] = session
         ids[id] = true
       end
@@ -283,12 +302,13 @@ function M.attach(session)
   local parent = session
   ---@type ajans.cli.terminal.Cmd?
   local cmd
-  if session.started then
+  local started = session.started == true
+  if started then
     cmd = session:attach()
   else
-    cmd = session:start()
+    cmd, started = session:start()
   end
-  if not cmd and not session.started then
+  if not started then
     return session
   end
   if cmd then
@@ -303,6 +323,7 @@ function M.attach(session)
       mux_backend = session.backend,
       mux_session = session.mux_session,
       mux_identity = session.identity,
+      external = session.external,
       parent = session,
     })
     terminal:start()

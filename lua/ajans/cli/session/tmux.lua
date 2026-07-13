@@ -27,7 +27,8 @@ function M:init()
   self.priority = self.external and 10 or 50
 end
 
----@return ajans.cli.terminal.Cmd?
+---@return ajans.cli.terminal.Cmd? cmd
+---@return boolean started
 function M:start()
   if not self.external then
     local cmd = { "tmux", "new", "-A", "-s", self.id }
@@ -35,7 +36,7 @@ function M:start()
     self:add_cmd(cmd)
     vim.list_extend(cmd, { ";", "set-option", "status", "off" })
     vim.list_extend(cmd, { ";", "set-option", "detach-on-destroy", "on" })
-    return { cmd = cmd }
+    return { cmd = cmd }, true
   elseif Config.cli.mux.create == "window" then
     local cmd = { "tmux", "new-window", "-dP", "-c", self.cwd, "-F", PANE_FORMAT }
     self:add_cmd(cmd)
@@ -50,6 +51,7 @@ function M:start()
     self:spawn(cmd)
     Util.info(("Started **%s** in a new tmux split"):format(self.tool.name))
   end
+  return nil, self.started == true
 end
 
 --- Execute the given tmux command and update the session info,

@@ -800,7 +800,8 @@ rollback = function(kind, id)
   return false
 end
 
----@return ajans.cli.terminal.Cmd?
+---@return ajans.cli.terminal.Cmd? cmd
+---@return boolean started
 function M:start_workspace()
   local result = M.request({
     "workspace",
@@ -812,7 +813,7 @@ function M:start_workspace()
     "--no-focus",
   })
   if not result then
-    return
+    return nil, false
   end
   local workspace_id = result.workspace and result.workspace.workspace_id
   local tab_id = result.tab and result.tab.tab_id
@@ -822,20 +823,20 @@ function M:start_workspace()
       rollback("workspace", workspace_id)
     end
     Util.error("Herdr workspace creation response is missing stable workspace, tab, or pane IDs")
-    return
+    return nil, false
   end
   local agent = self:launch(workspace_id, tab_id, "right")
   if not agent then
     rollback("workspace", workspace_id)
-    return
+    return nil, false
   end
   local closed = M.command({ "pane", "close", root_pane_id })
   if closed == nil then
     rollback("workspace", workspace_id)
-    return
+    return nil, false
   end
   self:set_agent(agent, "workspace")
-  return { cmd = { "herdr", "agent", "attach", self.herdr_terminal_id } }
+  return { cmd = { "herdr", "agent", "attach", self.herdr_terminal_id } }, true
 end
 
 ---@return boolean
@@ -848,9 +849,10 @@ function M:have_host_ids()
 end
 
 ---@return nil
+---@return boolean started
 function M:start_tab()
   if not self:have_host_ids() then
-    return
+    return nil, false
   end
   local result = M.request({
     "tab",
@@ -864,7 +866,7 @@ function M:start_tab()
     "--no-focus",
   })
   if not result then
-    return
+    return nil, false
   end
   local tab_id = result.tab and result.tab.tab_id
   local root_pane_id = result.root_pane and result.root_pane.pane_id
@@ -873,20 +875,21 @@ function M:start_tab()
       rollback("tab", tab_id)
     end
     Util.error("Herdr tab creation response is missing stable tab or pane IDs")
-    return
+    return nil, false
   end
   local agent = self:launch(vim.env.HERDR_WORKSPACE_ID, tab_id, "right")
   if not agent then
     rollback("tab", tab_id)
-    return
+    return nil, false
   end
   local closed = M.command({ "pane", "close", root_pane_id })
   if closed == nil then
     rollback("tab", tab_id)
-    return
+    return nil, false
   end
   self:set_agent(agent, "tab")
   Util.info(("Started **%s** in a new Herdr tab"):format(self.tool.name))
+  return nil, true
 end
 
 ---@param outer table
@@ -991,27 +994,30 @@ function M:size_split(pane_id, direction)
 end
 
 ---@return nil
+---@return boolean started
 function M:start_split()
   if not self:have_host_ids() then
-    return
+    return nil, false
   end
   local direction = Config.cli.mux.split.vertical and "right" or "down"
   local agent = self:launch(vim.env.HERDR_WORKSPACE_ID, vim.env.HERDR_TAB_ID, direction)
   if not agent then
-    return
+    return nil, false
   end
   if not self:size_split(agent.pane_id, direction) then
     rollback("pane", agent.pane_id)
-    return
+    return nil, false
   end
   self:set_agent(agent, "split")
   Util.info(("Started **%s** in a new Herdr split"):format(self.tool.name))
+  return nil, true
 end
 
----@return ajans.cli.terminal.Cmd?
+---@return ajans.cli.terminal.Cmd? cmd
+---@return boolean started
 function M:start()
   if not M.ensure_server() then
-    return
+    return nil, false
   end
   if not self.external then
     return self:start_workspace()
