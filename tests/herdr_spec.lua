@@ -83,6 +83,7 @@ describe("herdr backend", function()
   local original_executable
   local original_has
   local original_system
+  local original_hrtime
   local original_run
   local original_run_many
   local original_spawn
@@ -105,6 +106,7 @@ describe("herdr backend", function()
     original_executable = vim.fn.executable
     original_has = vim.fn.has
     original_system = vim.system
+    original_hrtime = vim.uv.hrtime
     original_run = Herdr._run
     original_run_many = Herdr._run_many
     Herdr._run_many = function(commands)
@@ -144,6 +146,7 @@ describe("herdr backend", function()
     vim.fn.executable = original_executable
     vim.fn.has = original_has
     vim.system = original_system
+    vim.uv.hrtime = original_hrtime
     Herdr._run = original_run
     Herdr._run_many = original_run_many
     Herdr._spawn = original_spawn
@@ -281,6 +284,46 @@ describe("herdr backend", function()
 
     assert.are.equal(#commands, #results)
     assert.are.equal(implementation.PROCESS_INFO_CONCURRENCY, peak)
+  end)
+
+  it("enforces one global process-info discovery deadline", function()
+    local implementation = fresh_herdr()
+    local tick = 0
+    local spawned = 0
+    local waited = 0
+    local killed = 0
+    vim.uv.hrtime = function()
+      tick = tick + 1
+      return tick <= 3 and 0 or 6 * 1e9
+    end
+    vim.system = function()
+      spawned = spawned + 1
+      return {
+        wait = function(_, timeout)
+          waited = waited + 1
+          assert.are.equal(implementation.DISCOVERY_TIMEOUT, timeout)
+          return completed()
+        end,
+        kill = function(_, signal)
+          assert.are.equal(15, signal)
+          killed = killed + 1
+        end,
+      }
+    end
+    local commands = {}
+    for index = 1, implementation.PROCESS_INFO_CONCURRENCY + 1 do
+      commands[index] = { "herdr", "pane", "process-info", "--pane", "p" .. index }
+    end
+
+    local results = implementation._run_many(commands)
+
+    assert.are.equal(implementation.PROCESS_INFO_CONCURRENCY, spawned)
+    assert.are.equal(1, waited)
+    assert.are.equal(implementation.PROCESS_INFO_CONCURRENCY - 1, killed)
+    assert.are.equal(#commands, #results)
+    for index = 2, #results do
+      assert.are.equal(124, results[index].code)
+    end
   end)
 
   it("decodes JSON command results without overriding the selected Herdr namespace", function()
@@ -439,7 +482,7 @@ describe("herdr backend", function()
     assert.is_true(complete)
     assert.are.equal(2, #sessions)
     assert.are.equal("claude", sessions[1].tool.name)
-    assert.are.same({ 10 }, sessions[1].pids)
+    assert.are.same({}, sessions[1].pids)
     assert.are.equal("custom", sessions[2].tool.name)
     assert.are.equal("/custom", sessions[2].cwd)
     assert.are.same({ 20, 21 }, sessions[2].pids)
@@ -448,9 +491,31 @@ describe("herdr backend", function()
       { "herdr", "tab", "list" },
       { "herdr", "pane", "list" },
       { "herdr", "agent", "list" },
-      { "herdr", "pane", "process-info", "--pane", "p1" },
       { "herdr", "pane", "process-info", "--pane", "p2" },
     }, calls)
+  end)
+
+  it("rejects malformed legacy inventory before later list calls", function()
+    Herdr.supports_snapshot = function()
+      return false
+    end
+    local calls = 0
+    local errors = {}
+    Herdr._run = function(cmd)
+      calls = calls + 1
+      assert.are.same({ "herdr", "workspace", "list" }, cmd)
+      return success({ type = "workspace_list" })
+    end
+    Util.error = function(message)
+      errors[#errors + 1] = message
+    end
+
+    local sessions, complete = Herdr.sessions()
+
+    assert.are.same({}, sessions)
+    assert.is_false(complete)
+    assert.are.equal(1, calls)
+    assert.matches("missing `workspaces`", errors[1])
   end)
 
   it("treats a stopped Herdr 0.7.0 server as empty discovery", function()
@@ -651,9 +716,9 @@ describe("herdr backend", function()
     assert.are.equal("herdr term-1", sessions[1].id)
     assert.are.equal("herdr:term-1", sessions[1].identity)
     assert.are.equal("workspace", sessions[1].herdr_placement)
-    assert.are.same({ 10, 11 }, sessions[1].pids)
+    assert.are.same({}, sessions[1].pids)
     assert.are.equal("copilot", sessions[2].tool.name)
-    assert.are.same({ 20, 21 }, sessions[2].pids)
+    assert.are.same({}, sessions[2].pids)
     assert.are.equal("custom", sessions[3].tool.name)
     assert.are.equal("/custom", sessions[3].cwd)
     assert.are.same({ 30, 31, 32 }, sessions[3].pids)
@@ -662,13 +727,13 @@ describe("herdr backend", function()
     assert.are.equal("w2", sessions[3].herdr_workspace_id)
     assert.are.equal("t2", sessions[3].herdr_tab_id)
     assert.are.equal("antigravity", sessions[4].tool.name)
-    assert.are.same({ 50, 51 }, sessions[4].pids)
+    assert.are.same({}, sessions[4].pids)
 
     local process_calls = vim.tbl_filter(function(cmd)
       return cmd[2] == "pane" and cmd[3] == "process-info"
     end, calls)
-    assert.are.equal(5, #process_calls)
-    for index, pane_id in ipairs({ "p1", "p2", "p3", "p4", "p5" }) do
+    assert.are.equal(2, #process_calls)
+    for index, pane_id in ipairs({ "p3", "p4" }) do
       assert.are.equal(pane_id, process_calls[index][#process_calls[index]])
     end
   end)

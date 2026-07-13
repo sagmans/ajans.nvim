@@ -66,9 +66,21 @@ function M._run_many(commands)
         job = vim.system(commands[command_index], { text = true }),
       }
     end
-    for _, item in ipairs(jobs) do
+    for job_index, item in ipairs(jobs) do
       elapsed = math.floor((vim.uv.hrtime() - started) / 1e6)
-      remaining = math.max(1, M.DISCOVERY_TIMEOUT - elapsed)
+      remaining = M.DISCOVERY_TIMEOUT - elapsed
+      if remaining <= 0 then
+        for pending = job_index, #jobs do
+          pcall(jobs[pending].job.kill, jobs[pending].job, 15)
+          results[jobs[pending].index] = {
+            code = 124,
+            signal = 15,
+            stdout = "",
+            stderr = "Herdr discovery timed out",
+          }
+        end
+        break
+      end
       results[item.index] = item.job:wait(remaining)
     end
     index = last + 1
@@ -641,11 +653,30 @@ function M.sessions()
   local tools = Config.tools()
   local tool_names = vim.tbl_keys(tools)
   table.sort(tool_names)
-  local process_infos, process_complete = pane_process_infos(panes)
+
+  local classified = {}
+  local unmatched = {}
+  for _, pane in ipairs(panes) do
+    local tool = match_pane(pane, agents[pane.pane_id], tools, tool_names)
+    if tool then
+      classified[pane.pane_id] = tool
+    else
+      unmatched[#unmatched + 1] = pane
+    end
+  end
+  -- Stable Ajans names and public Herdr labels are authoritative. Process
+  -- inspection is reserved for otherwise unclassified custom tools.
+  local process_infos, process_complete = pane_process_infos(unmatched)
   local sessions = {}
   for _, pane in ipairs(panes) do
     local agent = agents[pane.pane_id]
-    local tool, process_info, proc = match_pane(pane, agent, tools, tool_names, process_infos[pane.pane_id])
+    local process_info = process_infos[pane.pane_id]
+    local tool, proc
+    if classified[pane.pane_id] then
+      tool = classified[pane.pane_id]
+    else
+      tool, _, proc = match_pane(pane, agent, tools, tool_names, process_info)
+    end
     if tool then
       local cwd = proc and proc.cwd
         or agent and (agent.foreground_cwd or agent.cwd)

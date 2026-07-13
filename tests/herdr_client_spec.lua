@@ -6,11 +6,13 @@ describe("Herdr client", function()
   local original_status
   local original_exchange
   local original_spawn
+  local original_system
 
   before_each(function()
     original_status = Client._status
     original_exchange = Client._exchange
     original_spawn = vim.uv.spawn
+    original_system = vim.system
     Client._request_id = 0
   end)
 
@@ -18,6 +20,7 @@ describe("Herdr client", function()
     Client._status = original_status
     Client._exchange = original_exchange
     vim.uv.spawn = original_spawn
+    vim.system = original_system
   end)
 
   local function capture_request(response)
@@ -33,6 +36,28 @@ describe("Herdr client", function()
       return captured
     end
   end
+
+  it("resolves the production API socket from Herdr status", function()
+    Client._status = original_status
+    vim.system = function(cmd, opts)
+      assert.are.same({ "herdr", "status", "server", "--json" }, cmd)
+      assert.is_true(opts.text)
+      return {
+        wait = function(_, timeout)
+          assert.are.equal(Client.TIMEOUT, timeout)
+          return {
+            code = 0,
+            stdout = '{"running":true,"socket_path":"/tmp/herdr.sock"}\n',
+            stderr = "",
+          }
+        end,
+      }
+    end
+
+    local status = Client._status()
+
+    assert.are.same({ running = true, socket_path = "/tmp/herdr.sock" }, status)
+  end)
 
   it("sends prompt text through the local JSON socket", function()
     local captured = capture_request()
