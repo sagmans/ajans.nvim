@@ -98,7 +98,7 @@ end
 ---@param opts ajans.cli.session.Opts
 function M.new(opts)
   assert(type(opts) == "table", "terminal sessions require opts")
-  assert(opts.mux_backend == "tmux", "terminal sessions require tmux")
+  assert(opts.mux_backend and Session.backends[opts.mux_backend], "terminal sessions require a registered mux backend")
   local tool = opts.tool
 
   tool = type(tool) == "string" and Config.get_tool(tool) or tool --[[@as ajans.cli.Tool]]

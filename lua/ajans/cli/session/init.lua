@@ -5,10 +5,12 @@ local M = {}
 
 M.backends = {} ---@type table<string,ajans.cli.Session>
 M.did_setup = false
+M.backend = nil ---@type string?
 M._attached = {} ---@type table<string,ajans.cli.Session>
 
 ---@class ajans.cli.session.State
 ---@field id string unique id of the running tool (typically pid of tool)
+---@field identity? string stable backend resource identity
 ---@field cwd string
 ---@field tool ajans.cli.Tool|string
 ---@field pids? integer[] list of pids associated with this session
@@ -17,6 +19,7 @@ M._attached = {} ---@type table<string,ajans.cli.Session>
 ---@field parent? ajans.cli.Session
 ---@field mux_session? string
 ---@field mux_backend? string
+---@field mux_identity? string stable identity of the wrapped backend session
 
 ---@alias ajans.cli.session.Opts ajans.cli.session.State|{cwd?:string,id?:string}
 
@@ -59,13 +62,24 @@ function B:start()
 end
 
 --- Check if the session is still running
---- @return boolean
+---@return boolean
 function B:is_running()
   error("Backend:is_running() not implemented")
 end
 
 function B:is_attached()
-  return M._attached[self.id] ~= nil
+  if M._attached[self.id] ~= nil then
+    return true
+  end
+  local identity = self.mux_identity or self.identity
+  if identity then
+    for _, session in pairs(M._attached) do
+      if (session.mux_identity or session.identity) == identity then
+        return true
+      end
+    end
+  end
+  return false
 end
 
 --- List all active sessions for this backend
@@ -74,17 +88,69 @@ function B.sessions()
   error("Backend:sessions() not implemented")
 end
 
+---@class ajans.cli.session.ResolveOpts
+---@field configured? "auto"|"tmux"|"herdr"
+---@field herdr_host? boolean
+---@field tmux_host? boolean
+---@field installed? {tmux:boolean,herdr:boolean}
+---@field herdr_running? boolean
+
+---@param opts? ajans.cli.session.ResolveOpts
+---@return "tmux"|"herdr"
+function M.resolve_backend(opts)
+  opts = opts or {}
+  local configured = opts.configured or Config.cli.mux.backend or "auto"
+  if configured == "tmux" or configured == "herdr" then
+    return configured
+  end
+
+  local herdr_host = opts.herdr_host
+  if herdr_host == nil then
+    herdr_host = vim.env.HERDR_ENV == "1"
+  end
+  if herdr_host then
+    return "herdr"
+  end
+
+  local tmux_host = opts.tmux_host
+  if tmux_host == nil then
+    tmux_host = vim.env.TMUX ~= nil and vim.env.TMUX ~= ""
+  end
+  if tmux_host then
+    return "tmux"
+  end
+
+  local installed = opts.installed
+  if not installed then
+    installed = {
+      tmux = vim.fn.executable("tmux") == 1,
+      herdr = vim.fn.executable("herdr") == 1,
+    }
+  end
+  local herdr_running = opts.herdr_running
+  if herdr_running == nil then
+    herdr_running = installed.herdr and require("ajans.cli.session.herdr").is_server_running() or false
+  end
+  if herdr_running then
+    return "herdr"
+  end
+  if installed.herdr and not installed.tmux then
+    return "herdr"
+  end
+  return "tmux"
+end
+
 ---@param state ajans.cli.session.Opts
 function M.new(state)
+  M.setup()
   local tool = state.tool
   tool = type(tool) == "string" and Config.get_tool(tool) or tool --[[@as ajans.cli.Tool]]
-  local backend = "tmux"
+  local backend = M.selected_backend()
   local super = assert(M.backends[backend], "unknown backend: " .. backend)
   local meta = getmetatable(state)
   local self = setmetatable(state, super) --[[@as ajans.cli.Session]]
   self.tool = tool
   self.cwd = M.cwd(state)
-  -- self.cmd = state.cmd or { cmd = tool.cmd, env = tool.env }
   self.backend = backend
   self.sid = M.sid({ tool = tool.name, cwd = self.cwd })
   self.id = self.id or self.sid
@@ -109,10 +175,11 @@ end
 ---@param name string
 ---@param backend ajans.cli.Session
 function M.register(name, backend)
-  if name ~= "tmux" then
+  if name ~= "tmux" and name ~= "herdr" then
     return
   end
   setmetatable(backend, B)
+  backend.__index = backend
   backend.backend = name
   M.backends[name] = backend
 end
@@ -122,31 +189,49 @@ function M.setup()
     return
   end
   M.did_setup = true
-  Config.tools() -- load tool configs
+  Config.tools()
   M.register("tmux", require("ajans.cli.session.tmux"))
+  M.register("herdr", require("ajans.cli.session.herdr"))
+  M.backend = M.resolve_backend()
+end
+
+---@return string
+function M.selected_backend()
+  M.setup()
+  M.backend = M.backend or M.resolve_backend()
+  return M.backend
 end
 
 function M.sessions()
   M.setup()
   local ret = {} ---@type ajans.cli.Session[]
   local ids = {} ---@type table<string,boolean>
-  for name, backend in pairs(M.backends) do
-    for _, s in pairs(backend:sessions()) do
-      s.backend = name
-      s.started = true
-      if ids[s.id] then
-        Util.error("duplicate session id: " .. s.id)
-      else
-        ret[#ret + 1] = M.new(s)
-        ids[s.id] = true
-        if M._attached[s.id] then
-          M._attached[s.id] = ret[#ret] -- update to latest session instance
-        end
+  local identities = {} ---@type table<string,ajans.cli.Session>
+  local name = M.selected_backend()
+  local backend = assert(M.backends[name], "unknown backend: " .. name)
+  for _, state in pairs(backend:sessions()) do
+    state.backend = name
+    state.started = true
+    if ids[state.id] then
+      Util.error("duplicate session id: " .. state.id)
+    else
+      local session = M.new(state)
+      ret[#ret + 1] = session
+      ids[state.id] = true
+      if session.identity then
+        identities[session.identity] = session
+      end
+      if M._attached[state.id] then
+        M._attached[state.id] = session
       end
     end
   end
+
   for id, session in pairs(M._attached) do
-    if session.backend == "terminal" and session.mux_backend == "tmux" and session:is_running() then
+    if session.backend == "terminal" and session.mux_backend == name and session:is_running() then
+      if session.mux_identity and identities[session.mux_identity] then
+        session.parent = identities[session.mux_identity]
+      end
       if ids[id] then
         Util.error("duplicate session id: " .. id)
       else
@@ -156,7 +241,7 @@ function M.sessions()
     end
   end
   for id in pairs(M._attached) do
-    if not ids[id] then -- session is no longer running
+    if not ids[id] then
       M.detach(M._attached[id])
     end
   end
@@ -194,6 +279,7 @@ function M.attach(session)
       id = "terminal: " .. session.sid,
       mux_backend = session.backend,
       mux_session = session.mux_session,
+      mux_identity = session.identity,
       parent = session,
     })
     session:start()
@@ -207,11 +293,11 @@ end
 
 function M.attached()
   local ret = {} ---@type table<string,ajans.cli.Session>
-  for id, s in pairs(M._attached) do
-    if s:is_running() then
-      ret[id] = s
+  for id, session in pairs(M._attached) do
+    if session:is_running() then
+      ret[id] = session
     else
-      M.detach(s)
+      M.detach(session)
     end
   end
   return ret

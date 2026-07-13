@@ -58,9 +58,12 @@ local defaults = {
     },
     ---@class ajans.cli.Mux
     mux = {
-      -- terminal: tmux sessions will be attached inside a Neovim terminal
-      -- window: when run inside tmux, new sessions will be created in a new window
-      -- split: when run inside tmux, new sessions will be created in a new split
+      -- auto: prefer the multiplexer hosting Neovim, then a running Herdr server,
+      -- the sole installed backend, or tmux when both/neither are installed.
+      backend = "auto", ---@type "auto"|"tmux"|"herdr"
+      -- terminal: sessions will be attached inside a Neovim terminal
+      -- window: create a tmux window or Herdr tab when hosted by the backend
+      -- split: create a split when hosted by the backend
       create = "split", ---@type "terminal"|"window"|"split"
       split = {
         vertical = true, -- vertical or horizontal split
@@ -216,6 +219,7 @@ function M.setup(opts)
     require("ajans.status").setup()
 
     M.validate("cli.win.layout", { "float", "left", "bottom", "top", "right" })
+    M.validate("cli.mux.backend", { "auto", "tmux", "herdr" })
     M.validate("cli.mux.create", { "terminal", "window", "split" })
   end)
 end

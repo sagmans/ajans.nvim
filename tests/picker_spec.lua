@@ -66,6 +66,39 @@ describe("cli picker", function()
     assert.are.equal("/tmp/project", ret[#ret][1])
   end)
 
+  for _, case in ipairs({
+    {
+      name = "Herdr terminal wrapper",
+      state = {
+        installed = true,
+        started = true,
+        tool = { name = "claude" },
+        session = { cwd = "/tmp/project", backend = "terminal", mux_backend = "herdr" },
+      },
+      expected = "[herdr]",
+    },
+    {
+      name = "external Herdr workspace",
+      state = {
+        installed = true,
+        started = true,
+        external = true,
+        tool = { name = "claude" },
+        session = { cwd = "/tmp/project", backend = "herdr", mux_session = "w1" },
+      },
+      expected = "[herdr:w1]",
+    },
+  }) do
+    it("formats " .. case.name .. " identity", function()
+      local parts = require("ajans.cli.ui.select").format(case.state)
+      local text = table.concat(vim.tbl_map(function(part)
+        return part[1]
+      end, parts))
+
+      assert.matches(case.expected, text, nil, true)
+    end)
+  end
+
   it("keeps the required Snacks confirm callback", function()
     local SnacksPicker = require("ajans.cli.picker.snacks")
     local confirm

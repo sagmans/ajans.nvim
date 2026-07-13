@@ -73,15 +73,16 @@ function M.get(filter)
   local sessions = filter.attached and Session.attached() or Session.sessions()
 
   for _, s in pairs(sessions) do
-    -- if not attached, skip if another session with higher priority
-    -- is running with overlapping pids
+    -- Prefer a terminal wrapper for the same stable backend resource. Keep the
+    -- pid overlap fallback for tmux and local process discovery.
     local skip = false
-    if not s:is_attached() then
-      for _, s2 in pairs(sessions) do
-        if s2 ~= s and Util.overlaps(s2.pids or {}, s.pids or {}) and s2.priority > s.priority then
-          skip = true
-          break
-        end
+    local identity = s.mux_identity or s.identity
+    for _, s2 in pairs(sessions) do
+      local same_identity = identity ~= nil and identity == (s2.mux_identity or s2.identity)
+      local same_process = not s:is_attached() and Util.overlaps(s2.pids or {}, s.pids or {})
+      if s2 ~= s and (same_identity or same_process) and s2.priority > s.priority then
+        skip = true
+        break
       end
     end
 

@@ -22,18 +22,37 @@ function M.check()
     warn("autoread is disabled, file changes from AI CLI tools will not be detected automatically")
   end
 
-  if vim.fn.executable("tmux") == 1 then
-    ok("Terminal multiplexer `tmux` is installed")
+  local backend = require("ajans.cli.session").selected_backend()
+  if backend == "herdr" then
+    local Herdr = require("ajans.cli.session.herdr")
+    local valid, message, version = Herdr.validate()
+    if valid then
+      ok(("Selected terminal multiplexer `herdr` %s is available"):format(version or "unknown"))
+      local status = Herdr.server_status()
+      if status and status.running and status.compatible == false then
+        error("The running Herdr server is incompatible with the installed client; restart the Herdr server")
+      elseif status and status.running and status.restart_needed == true then
+        error("The running Herdr server uses a different version; restart the Herdr server")
+      elseif status and status.running then
+        ok("The selected Herdr server is running")
+      else
+        ok("The selected Herdr server is stopped and will start when Ajans creates a session")
+      end
+    else
+      error(message or "Selected terminal multiplexer `herdr` is unavailable")
+    end
+  elseif vim.fn.executable("tmux") == 1 then
+    ok("Selected terminal multiplexer `tmux` is installed")
   else
-    error("Terminal multiplexer `tmux` is not installed")
+    error("Selected terminal multiplexer `tmux` is not installed")
   end
 
-  if vim.fn.has("win32") == 0 then
-    for _, c in ipairs({ "ps", "lsof" }) do
-      if vim.fn.executable(c) == 1 then
-        ok("`" .. c .. "` is installed")
+  if backend == "tmux" and vim.fn.has("win32") == 0 then
+    for _, command in ipairs({ "ps", "lsof" }) do
+      if vim.fn.executable(command) == 1 then
+        ok("`" .. command .. "` is installed")
       else
-        warn("`" .. c .. "` is not installed, running processes and ports will not be detected")
+        warn("`" .. command .. "` is not installed, running processes and ports will not be detected")
       end
     end
   end

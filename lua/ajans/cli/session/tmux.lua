@@ -66,6 +66,8 @@ function M:spawn(cmd)
   end
 end
 
+function M:detach() end
+
 function M:is_running()
   return self.tmux_pid and vim.api.nvim_get_proc(self.tmux_pid) ~= nil
 end

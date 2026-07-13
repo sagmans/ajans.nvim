@@ -42,7 +42,7 @@ describe("config", function()
       cli = {
         mux = {
           enabled = false,
-          backend = "screen",
+          backend = "herdr",
           ignored = true,
           create = "split",
           split = {
@@ -58,16 +58,36 @@ describe("config", function()
     setup_config(opts)
 
     assert.is_nil(Config.cli.mux["enabled"])
-    assert.is_nil(Config.cli.mux["backend"])
     assert.is_nil(Config.cli.mux["ignored"])
     assert.is_nil(Config.cli.mux.split["extra"])
+    assert.are.equal("herdr", Config.cli.mux.backend)
     assert.are.equal("split", Config.cli.mux.create)
     assert.are.equal(false, Config.cli.mux.split.vertical)
     assert.are.equal(20, Config.cli.mux.split.size)
     assert.are.equal(100, Config.cli.mux.dump)
     assert.is_false(opts.cli.mux["enabled"])
-    assert.are.equal("screen", opts.cli.mux["backend"])
+    assert.are.equal("herdr", opts.cli.mux["backend"])
     assert.is_true(opts.cli.mux["ignored"])
     assert.is_true(opts.cli.mux.split["extra"])
+  end)
+
+  it("defaults mux backend selection to auto", function()
+    setup_config()
+
+    assert.are.equal("auto", Config.cli.mux.backend)
+  end)
+
+  for _, backend in ipairs({ "auto", "tmux", "herdr" }) do
+    it("accepts the " .. backend .. " mux backend", function()
+      setup_config({ cli = { mux = { backend = backend } } })
+
+      assert.is_true(Config.validate("cli.mux.backend", { "auto", "tmux", "herdr" }))
+    end)
+  end
+
+  it("rejects unknown mux backends", function()
+    setup_config({ cli = { mux = { backend = "screen" } } })
+
+    assert.is_false(Config.validate("cli.mux.backend", { "auto", "tmux", "herdr" }))
   end)
 end)
