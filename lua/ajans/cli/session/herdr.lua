@@ -379,7 +379,7 @@ function M.ensure_server()
   if status.running then
     return true
   end
-  local ok, spawned = pcall(M._spawn, { "herdr", "server" }, {
+  local ok, spawned, spawn_err = pcall(M._spawn, { "herdr", "server" }, {
     text = true,
     detach = true,
     stdin = false,
@@ -387,7 +387,7 @@ function M.ensure_server()
     stderr = false,
   })
   if not ok or not spawned then
-    Util.error("Failed to start the Herdr server")
+    Util.error("Failed to start the Herdr server: " .. tostring(spawn_err or spawned))
     return false
   end
   if not M._wait(M.STARTUP_TIMEOUT, M.is_server_running, M.STARTUP_INTERVAL) then

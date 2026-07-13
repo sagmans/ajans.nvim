@@ -619,6 +619,25 @@ describe("herdr backend", function()
     assert.are.same({ timeout = Herdr.STARTUP_TIMEOUT, interval = Herdr.STARTUP_INTERVAL }, waited)
   end)
 
+  it("preserves a detached server spawn diagnostic", function()
+    local errors = {}
+    Herdr.validate = function()
+      return true
+    end
+    Herdr.server_status = function()
+      return { running = false, compatible = true, restart_needed = false }
+    end
+    Herdr._spawn = function()
+      return false, "permission denied"
+    end
+    Util.error = function(message)
+      errors[#errors + 1] = message
+    end
+
+    assert.is_false(Herdr.ensure_server())
+    assert.matches("permission denied", errors[1])
+  end)
+
   it("reports a bounded server startup timeout", function()
     local errors = {}
     Herdr.validate = function()
