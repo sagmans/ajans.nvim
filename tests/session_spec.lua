@@ -564,6 +564,28 @@ describe("session mux", function()
     assert.is_false(detached)
   end)
 
+  it("ignores asynchronous liveness results after attachment state changes", function()
+    local complete_liveness
+    local completed
+    local session = {
+      id = "herdr term-1",
+      is_running_async = function(_, callback)
+        complete_liveness = callback
+      end,
+      detach = function() end,
+    }
+    Session._attached[session.id] = session
+
+    Session.attached_async(function(sessions)
+      completed = sessions
+    end)
+    Session.detach(session)
+    complete_liveness(true)
+
+    assert.are.same({}, completed)
+    assert.are.same({}, Session._attached)
+  end)
+
   it("wraps tmux start commands in terminal sessions", function()
     local cwd = vim.uv.cwd()
     local started = 0

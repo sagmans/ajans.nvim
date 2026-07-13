@@ -35,8 +35,8 @@ describe("cli", function()
           end,
         },
         session = {
-          accepts_automated_input = function()
-            return false
+          authorize_automated_input = function(_, callback)
+            callback(false)
           end,
           send = function()
             sent = true

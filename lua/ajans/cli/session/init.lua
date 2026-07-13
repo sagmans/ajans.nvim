@@ -7,6 +7,7 @@ M.backends = {} ---@type table<string,ajans.cli.Session>
 M.did_setup = false
 M.backend = nil ---@type string?
 M._attached = {} ---@type table<string,ajans.cli.Session>
+M._attachment_generation = 0
 
 ---@class ajans.cli.session.State
 ---@field id string unique id of the running tool (typically pid of tool)
@@ -72,6 +73,11 @@ end
 ---@return boolean
 function B:accepts_automated_input()
   return self:is_running()
+end
+
+---@param callback fun(accepted:boolean)
+function B:authorize_automated_input(callback)
+  callback(self:accepts_automated_input())
 end
 
 function B:is_attached()
@@ -249,6 +255,7 @@ function M.sessions()
       end
       if M._attached[state.id] then
         M._attached[state.id] = session
+        M._attachment_generation = M._attachment_generation + 1
       end
     end
   end
@@ -294,6 +301,7 @@ end
 function M.detach(session)
   if M._attached[session.id] then
     M._attached[session.id] = nil
+    M._attachment_generation = M._attachment_generation + 1
     session:detach()
     vim.schedule(function()
       Util.emit("AjansCliDetach", { id = session.id })
@@ -343,6 +351,7 @@ function M.attach(session)
     session = terminal
   end
   M._attached[session.id] = session
+  M._attachment_generation = M._attachment_generation + 1
   vim.schedule(function()
     Util.emit("AjansCliAttach", { id = session.id })
   end)
@@ -373,6 +382,7 @@ function M.attached_async(callback)
     entries[#entries + 1] = { id = id, session = session }
   end
   local pending = #entries
+  local generation = M._attachment_generation
   if pending == 0 then
     callback(ret)
     return
@@ -380,10 +390,12 @@ function M.attached_async(callback)
   for _, entry in ipairs(entries) do
     local id, session = entry.id, entry.session
     local function complete(running)
-      if running then
-        ret[id] = session
-      else
-        M.detach(session)
+      if generation == M._attachment_generation and M._attached[id] == session then
+        if running then
+          ret[id] = session
+        else
+          M.detach(session)
+        end
       end
       pending = pending - 1
       if pending == 0 then

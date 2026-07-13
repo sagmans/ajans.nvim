@@ -12,6 +12,7 @@ local M = {}
 local cli_sessions = {} ---@type table<string, ajans.cli.Status>
 local cli_last_update = 0
 local cli_update_pending = false
+local cli_generation = 0
 
 local function normalize_cli_session(id, session)
   local tool = session.tool
@@ -39,6 +40,7 @@ local function update_cli_status(sessions)
 end
 
 local function update_cli_snapshot()
+  cli_generation = cli_generation + 1
   update_cli_status(require("ajans.cli.session").attached_snapshot())
 end
 
@@ -47,11 +49,17 @@ local function schedule_cli_update()
     return
   end
   cli_update_pending = true
+  local generation = cli_generation
   vim.schedule(function()
-    require("ajans.cli.session").attached_async(function(sessions)
+    local ok = pcall(require("ajans.cli.session").attached_async, function(sessions)
       cli_update_pending = false
-      update_cli_status(sessions)
+      if generation == cli_generation then
+        update_cli_status(sessions)
+      end
     end)
+    if not ok then
+      cli_update_pending = false
+    end
   end)
 end
 

@@ -1839,6 +1839,29 @@ describe("herdr backend", function()
     assert.is_true(running)
   end)
 
+  it("completes asynchronous liveness when process spawning fails", function()
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+    })
+    local running
+    Herdr._run_async = function()
+      error("EACCES")
+    end
+    Util.error = function() end
+
+    session:is_running_async(function(value)
+      running = value
+    end)
+
+    vim.wait(100, function()
+      return running ~= nil
+    end)
+    assert.is_true(running)
+  end)
+
   it("returns false when a Herdr pane disappears", function()
     local errors = {}
     local session = new_session({

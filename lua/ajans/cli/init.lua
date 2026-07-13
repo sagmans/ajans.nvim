@@ -192,15 +192,17 @@ function M.send(opts)
   State.with(function(state)
     Util.exit_visual_mode()
     vim.schedule(function()
-      if not state.session:accepts_automated_input() then
-        Util.warn(("Refusing to send: `%s` is no longer the active session process"):format(state.tool.name))
-        return
-      end
-      msg = state.tool:format(text)
-      state.session:send(msg .. "\n")
-      if opts.submit then
-        state.session:submit()
-      end
+      state.session:authorize_automated_input(function(accepted)
+        if not accepted then
+          Util.warn(("Refusing to send: `%s` is no longer the active session process"):format(state.tool.name))
+          return
+        end
+        msg = state.tool:format(text)
+        state.session:send(msg .. "\n")
+        if opts.submit then
+          state.session:submit()
+        end
+      end)
     end)
   end, {
     attach = true,

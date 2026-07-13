@@ -30,6 +30,8 @@ local READY_MAX_WAIT = 5000 -- ms
 local READY_CHECK_INTERVAL = 100 -- ms
 local READY_INIT_DELAY = 500 -- ms
 local READY_INIT_LINES = 5
+local TARGET_MAX_WAIT = 1000 -- ms
+local TARGET_CHECK_INTERVAL = 50 -- ms
 local SEND_DELAY = 100 --ms
 local TERM_CLOSE_ERROR_DELAY = 3000 -- ms if the terminal errored, don't close the window
 local TERM_CLOSE_DELAY = 500 -- ms if the terminal closed too quickly, don't close the window
@@ -139,14 +141,42 @@ end
 
 function M:accepts_automated_input()
   if self.parent and self.parent.accepts_automated_input then
-    -- A fresh embedded tmux session has no pane PID until discovery catches up.
-    -- Its terminal readiness queue is the safe authority during that window.
-    if self.fresh and self.parent.backend == "tmux" and not self.parent.tmux_pid then
-      return self:is_running()
-    end
     return self.parent:accepts_automated_input()
   end
   return self:is_running()
+end
+
+---@param callback fun(accepted:boolean)
+function M:authorize_automated_input(callback)
+  local parent = self.parent
+  if not (self.fresh and parent and parent.backend == "tmux" and not parent.tmux_pid) then
+    callback(self:accepts_automated_input())
+    return
+  end
+  local deadline = vim.uv.now() + TARGET_MAX_WAIT
+  local function check()
+    if not self:is_running() then
+      self.fresh = false
+      callback(false)
+      return
+    end
+    local resolved = pcall(parent.pane_id, parent)
+    if not resolved then
+      self.fresh = false
+      callback(false)
+      return
+    end
+    if parent.tmux_pid and parent:accepts_automated_input() then
+      self.fresh = false
+      callback(true)
+    elseif vim.uv.now() >= deadline then
+      self.fresh = false
+      callback(false)
+    else
+      vim.defer_fn(check, TARGET_CHECK_INTERVAL)
+    end
+  end
+  check()
 end
 
 function M:buf_valid()

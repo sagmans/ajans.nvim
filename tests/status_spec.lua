@@ -192,6 +192,35 @@ describe("status", function()
     assert.are.same({}, Status.cli())
   end)
 
+  it("ignores delayed refreshes older than an attach event", function()
+    local attached = {}
+    Session.attached_snapshot = function()
+      return attached
+    end
+    local complete
+    Session.attached_async = function(callback)
+      complete = callback
+    end
+    Status.setup()
+    set_cli_last_update(vim.uv.now() - 5001)
+    local scheduled
+    vim.schedule = function(callback)
+      scheduled = callback
+    end
+
+    Status.cli()
+    scheduled()
+    attached = {
+      claude = { id = "claude", tool = { name = "claude" }, cwd = "/tmp/project" },
+    }
+    vim.api.nvim_exec_autocmds("User", { pattern = "AjansCliAttach" })
+    complete({})
+
+    assert.are.same({
+      { id = "claude", tool = "claude", cwd = "/tmp/project" },
+    }, Status.cli())
+  end)
+
   it("refreshes the periodic cache without blocking statusline rendering", function()
     Session.attached_snapshot = function()
       return {}

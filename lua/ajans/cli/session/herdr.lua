@@ -823,7 +823,7 @@ function M:is_running_async(callback)
     callback(false)
     return
   end
-  M._run_async(herdr_cmd(args), { text = true, timeout = M.LIVENESS_TIMEOUT }, function(result)
+  local function complete(result)
     vim.schedule(function()
       if result.code == 0 then
         local value = decode(result.stdout)
@@ -833,7 +833,11 @@ function M:is_running_async(callback)
       local message = error_message(result)
       callback(resolve_liveness(self, false, stopped_error(message) and "stopped" or message))
     end)
-  end)
+  end
+  local ok, spawn_error = pcall(M._run_async, herdr_cmd(args), { text = true, timeout = M.LIVENESS_TIMEOUT }, complete)
+  if not ok then
+    complete({ code = 127, signal = 0, stdout = "", stderr = tostring(spawn_error) })
+  end
 end
 
 function M:accepts_automated_input()
