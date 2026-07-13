@@ -166,44 +166,53 @@ function M:pane_id()
   return self.tmux_pane_id
 end
 
----Send text to a tmux pane
-function M:send(text)
-  self._send_queue = self._send_queue or {}
-  self._send_queue[#self._send_queue + 1] = text
+function M:_drain_input()
   if self._sending then
     return
   end
+  self._input_queue = self._input_queue or {}
+  local item = table.remove(self._input_queue, 1)
+  if not item then
+    return
+  end
+  self._sending = true
 
-  local function drain()
-    local next = table.remove(self._send_queue, 1)
-    if not next then
-      self._sending = false
-      return
-    end
-    self._sending = true
-
-    local function send()
-      local buffer = "ajans-" .. self.tmux_pane_id
-      Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = next })
-      Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", self.tmux_pane_id })
-      drain()
-    end
-
-    if self.tool.mux_focus then
-      -- Send focus-in event first (some TUI apps like qwen ignore input when unfocused)
-      Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Escape", "[", "I" })
-      vim.defer_fn(send, 50) -- slight delay to ensure focus event is processed first
-    else
-      send()
-    end
+  local function complete()
+    self._sending = false
+    self:_drain_input()
+  end
+  if item.kind == "submit" then
+    Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Enter" })
+    complete()
+    return
   end
 
-  drain()
+  local function send_text()
+    local buffer = "ajans-" .. self.tmux_pane_id
+    Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = item.text })
+    Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", self.tmux_pane_id })
+    complete()
+  end
+  if self.tool.mux_focus then
+    Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Escape", "[", "I" })
+    vim.defer_fn(send_text, 50)
+  else
+    send_text()
+  end
 end
 
 ---Send text to a tmux pane
+function M:send(text)
+  self._input_queue = self._input_queue or {}
+  self._input_queue[#self._input_queue + 1] = { kind = "text", text = text }
+  self:_drain_input()
+end
+
+---Submit after all queued text reaches the tmux pane.
 function M:submit()
-  Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Enter" })
+  self._input_queue = self._input_queue or {}
+  self._input_queue[#self._input_queue + 1] = { kind = "submit" }
+  self:_drain_input()
 end
 
 function M:dump()

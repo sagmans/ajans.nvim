@@ -94,6 +94,7 @@ end
 ---@field tmux_host? boolean
 ---@field installed? {tmux:boolean,herdr:boolean}
 ---@field herdr_running? boolean
+---@field herdr_usable? boolean
 
 ---@param opts? ajans.cli.session.ResolveOpts
 ---@return "tmux"|"herdr"
@@ -104,22 +105,6 @@ function M.resolve_backend(opts)
     return configured
   end
 
-  local herdr_host = opts.herdr_host
-  if herdr_host == nil then
-    herdr_host = vim.env.HERDR_ENV == "1"
-  end
-  if herdr_host then
-    return "herdr"
-  end
-
-  local tmux_host = opts.tmux_host
-  if tmux_host == nil then
-    tmux_host = vim.env.TMUX ~= nil and vim.env.TMUX ~= ""
-  end
-  if tmux_host then
-    return "tmux"
-  end
-
   local installed = opts.installed
   if not installed then
     installed = {
@@ -127,14 +112,39 @@ function M.resolve_backend(opts)
       herdr = vim.fn.executable("herdr") == 1,
     }
   end
-  local herdr_running = opts.herdr_running
-  if herdr_running == nil then
-    herdr_running = installed.herdr and require("ajans.cli.session.herdr").is_server_running() or false
+  local herdr_usable = opts.herdr_usable
+  if herdr_usable == nil then
+    if opts.installed or opts.herdr_running ~= nil then
+      herdr_usable = installed.herdr
+    else
+      herdr_usable = installed.herdr and require("ajans.cli.session.herdr").is_usable() or false
+    end
   end
-  if herdr_running then
+
+  local herdr_host = opts.herdr_host
+  if herdr_host == nil then
+    herdr_host = vim.env.HERDR_ENV == "1"
+  end
+  if herdr_host and herdr_usable then
     return "herdr"
   end
-  if installed.herdr and not installed.tmux then
+
+  local tmux_host = opts.tmux_host
+  if tmux_host == nil then
+    tmux_host = vim.env.TMUX ~= nil and vim.env.TMUX ~= ""
+  end
+  if tmux_host and installed.tmux then
+    return "tmux"
+  end
+
+  local herdr_running = opts.herdr_running
+  if herdr_running == nil then
+    herdr_running = herdr_usable and require("ajans.cli.session.herdr").is_server_running() or false
+  end
+  if herdr_running and herdr_usable then
+    return "herdr"
+  end
+  if herdr_usable and not installed.tmux then
     return "herdr"
   end
   return "tmux"
@@ -209,7 +219,8 @@ function M.sessions()
   local identities = {} ---@type table<string,ajans.cli.Session>
   local name = M.selected_backend()
   local backend = assert(M.backends[name], "unknown backend: " .. name)
-  for _, state in pairs(backend:sessions()) do
+  local states, authoritative = backend:sessions()
+  for _, state in pairs(states) do
     state.backend = name
     state.started = true
     if ids[state.id] then
@@ -228,7 +239,9 @@ function M.sessions()
   end
 
   for id, session in pairs(M._attached) do
-    if session.backend == "terminal" and session.mux_backend == name and session:is_running() then
+    local terminal = session.backend == "terminal" and session.mux_backend == name
+    local retained = authoritative == false and session.backend == name
+    if (terminal or retained) and session:is_running() then
       if session.mux_identity and identities[session.mux_identity] then
         session.parent = identities[session.mux_identity]
       end
@@ -240,9 +253,11 @@ function M.sessions()
       end
     end
   end
-  for id in pairs(M._attached) do
-    if not ids[id] then
-      M.detach(M._attached[id])
+  if authoritative ~= false then
+    for id in pairs(M._attached) do
+      if not ids[id] then
+        M.detach(M._attached[id])
+      end
     end
   end
   return ret
@@ -265,6 +280,7 @@ function M.attach(session)
   if M._attached[session.id] then
     return session
   end
+  local parent = session
   ---@type ajans.cli.terminal.Cmd?
   local cmd
   if session.started then
@@ -272,17 +288,28 @@ function M.attach(session)
   else
     cmd = session:start()
   end
+  if not cmd and not session.started then
+    return session
+  end
   if cmd then
-    session = require("ajans.cli.terminal").new({
-      tool = session.tool:clone({ cmd = cmd.cmd, env = cmd.env }),
+    local terminal_tool = session.tool:clone({ cmd = cmd.cmd })
+    terminal_tool.config = vim.deepcopy(terminal_tool.config or {})
+    terminal_tool.config.env = {}
+    terminal_tool.env = cmd.env or {}
+    local terminal = require("ajans.cli.terminal").new({
+      tool = terminal_tool,
       cwd = session.cwd,
-      id = "terminal: " .. session.sid,
+      id = "terminal: " .. (session.identity or session.sid),
       mux_backend = session.backend,
       mux_session = session.mux_session,
       mux_identity = session.identity,
       parent = session,
     })
-    session:start()
+    terminal:start()
+    if not terminal.started then
+      return parent
+    end
+    session = terminal
   end
   M._attached[session.id] = session
   vim.schedule(function()

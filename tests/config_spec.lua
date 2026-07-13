@@ -37,6 +37,25 @@ describe("config", function()
     }, Config.cli.mux.split)
   end)
 
+  it("bounds shared multiplexer scrollback to the Herdr and tmux parity limit", function()
+    setup_config({ cli = { mux = { dump = 5000 } } })
+    assert.are.equal(1000, Config.cli.mux.dump)
+
+    setup_config({ cli = { mux = { dump = 0 } } })
+    assert.are.equal(1, Config.cli.mux.dump)
+  end)
+
+  it("bounds fractional split sizes to the shared backend range", function()
+    setup_config({ cli = { mux = { split = { size = 0.01 } } } })
+    assert.are.equal(0.1, Config.cli.mux.split.size)
+
+    setup_config({ cli = { mux = { split = { size = 1 } } } })
+    assert.are.equal(0.9, Config.cli.mux.split.size)
+
+    setup_config({ cli = { mux = { split = { size = 20 } } } })
+    assert.are.equal(20, Config.cli.mux.split.size)
+  end)
+
   it("exposes only supported mux options", function()
     local opts = {
       cli = {

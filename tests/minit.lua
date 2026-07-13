@@ -32,7 +32,8 @@ require("lazy.minit").setup({
 })
 
 -- Tests must never inspect or mutate the developer's live Herdr session.
-require("ajans.cli.session.herdr")._run = function(cmd)
+local Herdr = require("ajans.cli.session.herdr")
+Herdr._run = function(cmd)
   if cmd[2] == "status" then
     return {
       code = 0,
@@ -45,6 +46,11 @@ require("ajans.cli.session.herdr")._run = function(cmd)
     stdout = "",
     stderr = "failed to connect to Herdr server: test command execution is mocked\n",
   }
+end
+Herdr._run_many = function(commands)
+  return vim.tbl_map(function(cmd)
+    return Herdr._run(cmd)
+  end, commands)
 end
 
 -- TODO: check why this is needed

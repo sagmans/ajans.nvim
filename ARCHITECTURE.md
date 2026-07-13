@@ -1,6 +1,6 @@
 # Architecture
 
-Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI model. It manages tmux sessions, a Neovim terminal wrapper, prompt/context rendering, picker integrations, and status reporting.
+Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI model. It manages tmux or Herdr sessions, a Neovim terminal wrapper, prompt/context rendering, picker integrations, and status reporting.
 
 ## Module map
 
@@ -11,13 +11,13 @@ Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI 
 | CLI API | `lua/ajans/cli/init.lua` | Public API: `select`, `show`, `toggle`, `focus`, `hide`, `close`, `send`, `prompt`, `render`. |
 | Tool registry | `lua/ajans/cli/tool.lua`, `aj/cli/*.lua` | Load default tool configs from runtime path and merge user overrides. |
 | State | `lua/ajans/cli/state.lua` | Combine installed tools, running sessions, attached sessions, and user filters. |
-| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua` | tmux-backed session discovery, start, attach, detach, send, submit, dump. |
+| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua`, `lua/ajans/cli/session/herdr.lua` | Backend selection plus tmux/Herdr discovery, start, attach, detach, send, submit, and dump adapters. |
 | Terminal wrapper | `lua/ajans/cli/terminal.lua`, `lua/ajans/cli/scrollback.lua` | Neovim terminal window/buffer lifecycle, keymaps, send queue, mode restore, scrollback. |
 | Context | `lua/ajans/cli/context/*.lua`, `lua/ajans/text.lua`, `lua/ajans/treesitter.lua` | Render prompt variables into strings with optional highlighting metadata. |
 | Pickers | `lua/ajans/cli/picker/*.lua`, `lua/ajans/cli/ui/*.lua` | Tool/prompt/file/buffer selection through `vim.ui.select`, snacks, Telescope, or fzf-lua. |
 | Watch | `lua/ajans/cli/watch.lua` | Watch loaded file directories and run `:checktime`. |
 | Status | `lua/ajans/status.lua` | Cache attached CLI sessions for statuslines. |
-| Health | `lua/ajans/health.lua` | Check Neovim version, `autoread`, tmux, process tools, and CLI executables. |
+| Health | `lua/ajans/health.lua` | Check Neovim, `autoread`, the selected backend/version/server, process tools when tmux needs them, and CLI executables. |
 | Docs | `lua/ajans/docs.lua`, `tests/fixtures/readme.lua` | Generate reference blocks for docs. |
 
 ## Startup flow
@@ -48,7 +48,7 @@ state layer selects/attaches a session
 tool formatter adapts text for target CLI
         │
         ▼
-tmux backend sends text to pane
+selected tmux or Herdr backend sends text to pane
 ```
 
 ## Tool loading
@@ -59,17 +59,18 @@ Bundled tool configs live in `aj/cli/`.
 
 ## Session model
 
-Ajans uses tmux for all CLI sessions.
+Ajans resolves one active backend during session setup. Explicit `tmux` or `herdr` configuration wins. Auto-selection considers the host environment, a running compatible Herdr server, and installed executables.
 
 - New sessions get stable names from tool name plus cwd hash.
-- Existing tmux panes are discovered with `tmux list-panes`.
-- Processes are inspected with `ps`, `/proc`, and `lsof` where available.
-- If Neovim is already inside tmux and `cli.mux.create` is `"window"` or `"split"`, Ajans can start an external tmux window/split instead of an embedded terminal.
-- Embedded terminal sessions attach to tmux and are tracked as `terminal: ...` sessions.
+- The tmux adapter discovers panes with `tmux list-panes` and inspects process trees with `ps`, `/proc`, and `lsof` where available.
+- The Herdr adapter takes an `api snapshot` on Herdr 0.7.2+ and composes the equivalent public list inventory on 0.7.0–0.7.1. It fetches every pane's process metadata with bounded concurrency and matches the same configured tool detectors. It keeps Herdr terminal, pane, tab, workspace, and process identities.
+- Herdr CLI calls inherit the selected namespace and use bounded execution, decoded JSON errors, and transactional cleanup for partially created workspaces, tabs, or panes.
+- If Neovim is hosted by the selected backend, `window` maps to a tmux window or Herdr tab and `split` maps to a native pane split.
+- Embedded terminal sessions attach to the persistent backend resource and are tracked as `terminal: ...` wrappers. Stable backend identity removes duplicate parent/wrapper entries.
 
 ## Terminal wrapper
 
-The wrapper is a Neovim terminal buffer/window that attaches to a tmux session.
+The wrapper is a Neovim terminal buffer/window that attaches to a tmux or Herdr session.
 
 It handles:
 
@@ -78,7 +79,7 @@ It handles:
 - terminal/normal mode restore
 - delayed send queue while the CLI initializes
 - cleanup on terminal close
-- optional tmux scrollback capture when entering normal mode or using mouse scroll
+- optional backend scrollback capture when entering normal mode or using mouse scroll
 
 ## Context renderer
 
@@ -103,5 +104,5 @@ Session attach/detach emits user autocmds:
 
 - No hosted service dependency.
 - No bundled AI model.
-- No non-tmux session backend.
+- One selected local session backend at a time: tmux or Herdr.
 - No automatic whole-file context unless you add custom context.

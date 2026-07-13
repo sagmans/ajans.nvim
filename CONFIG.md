@@ -78,17 +78,20 @@ local defaults = {
     },
     ---@class ajans.cli.Mux
     mux = {
-      -- terminal: tmux sessions will be attached inside a Neovim terminal
-      -- window: when run inside tmux, new sessions will be created in a new window
-      -- split: when run inside tmux, new sessions will be created in a new split
+      -- auto: prefer the usable multiplexer hosting Neovim, then a running Herdr server,
+      -- the sole usable backend, or tmux when both/neither are usable.
+      backend = "auto", ---@type "auto"|"tmux"|"herdr"
+      -- terminal: sessions will be attached inside a Neovim terminal
+      -- window: create a tmux window or Herdr tab when hosted by the backend
+      -- split: create a split when hosted by the backend
       create = "split", ---@type "terminal"|"window"|"split"
       split = {
         vertical = true, -- vertical or horizontal split
-        size = 0.5, -- size of the split (0-1 for percentage)
+        size = 0.5, -- fraction clamped to 0.1-0.9 (<= 1), or cells within that layout range (> 1)
       },
       -- max lines to capture when dumping a multiplexer pane for scrollback support
       -- more lines means slower loading of the scrollback
-      dump = 2000,
+      dump = 1000,
     },
     --- Actual cli tool config is loaded from the runtime path `aj/cli/{tool}.lua` and merged with the config below.
     --- For default configs, see https://github.com/sagmans/ajans.nvim/tree/main/aj/cli
@@ -160,7 +163,7 @@ local defaults = {
 
 ### `cli.win`
 
-Controls the Neovim terminal wrapper used to attach to tmux sessions.
+Controls the Neovim terminal wrapper used to attach to tmux or Herdr sessions.
 
 - `layout`: `"right"`, `"left"`, `"bottom"`, `"top"`, or `"float"`
 - `float`: floating-window size/options
@@ -172,15 +175,17 @@ Controls the Neovim terminal wrapper used to attach to tmux sessions.
 
 ### `cli.mux`
 
-Controls how tmux sessions are created or attached.
+Controls backend selection and session placement.
 
-- `create = "terminal"`: attach tmux session inside a Neovim terminal
-- `create = "window"`: when already inside tmux, start external sessions in a new tmux window
-- `create = "split"`: when already inside tmux, start external sessions in a tmux split
-- `split.vertical` and `split.size`: external tmux split layout
-- `dump`: max tmux scrollback lines captured for Ajans scrollback
+- `backend = "auto"`: prefer a usable Herdr when it hosts Neovim, then a usable tmux when it hosts Neovim, then an already-running compatible Herdr server, the sole usable backend, and finally tmux as the compatibility fallback
+- `backend = "tmux"` or `"herdr"`: select that backend explicitly
+- `create = "terminal"`: attach the persistent session inside a Neovim terminal
+- `create = "window"`: when hosted by the backend, create a tmux window or Herdr tab
+- `create = "split"`: when hosted by the backend, create a native split
+- `split.vertical` and `split.size`: external split direction and size; values at or below `1` are fractions clamped to the shared `0.1`–`0.9` range, and larger values are terminal cells that must resolve within the same layout range
+- `dump`: scrollback lines captured for Ajans scrollback, clamped to the shared backend limit of `1`–`1000`
 
-Ajans uses the tmux backend for all CLI sessions.
+Herdr requires version `>= 0.7.0` on macOS or Linux. Herdr commands inherit `HERDR_SESSION` and `HERDR_SOCKET_PATH`, so named Herdr sessions work without extra Ajans configuration. Native Herdr tab/split creation also requires the `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID` values exported by Herdr; `create = "terminal"` does not.
 
 ### `cli.tools`
 
@@ -217,8 +222,8 @@ Supported tool fields include:
 - `keys`: terminal-window keymaps for this tool
 - `is_proc`: process detector string or function
 - `format`: formatter run before text is sent
-- `native_scroll`: skip Ajans tmux scrollback when the tool handles scrolling itself
-- `mux_focus`: send a tmux focus event before text input
+- `native_scroll`: skip Ajans multiplexer scrollback when the tool handles scrolling itself
+- `mux_focus`: send a terminal focus event before text input
 
 ### `cli.prompts`
 

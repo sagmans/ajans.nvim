@@ -4,17 +4,29 @@ local M = {}
 ---@field id string
 ---@field tool string
 ---@field cwd string
+---@field backend string
+---@field external boolean
+---@field terminal boolean
+---@field identity? string
 
 local cli_sessions = {} ---@type table<string, ajans.cli.Status>
 local cli_last_update = 0
 
 local function normalize_cli_session(id, session)
   local tool = session.tool
-  return {
+  local ret = {
     id = session.id or id,
     tool = type(tool) == "table" and tool.name or tool,
     cwd = session.cwd,
   }
+  local backend = session.mux_backend or session.backend
+  if backend then
+    ret.backend = backend
+    ret.external = session.external == true
+    ret.terminal = session.backend == "terminal"
+  end
+  ret.identity = session.mux_identity or session.identity
+  return ret
 end
 
 local function update_cli_status()

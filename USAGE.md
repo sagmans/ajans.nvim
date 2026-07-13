@@ -1,18 +1,24 @@
 # Usage
 
-Ajans centers on one workflow: use keymaps to select a tmux-backed AI CLI, attach to it, then send editor context.
+Ajans centers on one workflow: use keymaps to select a persistent tmux- or Herdr-backed AI CLI, attach to it, then send editor context.
 
 Ajans does not create global keymaps by itself. The examples below assume the suggested mappings from [KEYMAPS.md](./KEYMAPS.md).
+
+## Backend selection
+
+`cli.mux.backend = "auto"` is the default. Auto-selection prefers a usable multiplexer hosting Neovim, then a running compatible Herdr server, the sole usable backend, and tmux as the compatibility fallback. Use `"tmux"` or `"herdr"` for an explicit choice.
+
+Herdr `>= 0.7.0` is supported on macOS and Linux. When Neovim runs inside Herdr, Ajans maps `create = "window"` to a Herdr tab and `create = "split"` to a Herdr pane split. Native placement uses `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID`, which Herdr exports to hosted panes. Named sessions selected with `HERDR_SESSION` or `HERDR_SOCKET_PATH` are inherited automatically.
 
 ## Keymap-first workflow
 
 1. Select or start a tool with `<leader>as`.
 
-   This finds supported CLI tools and attaches to an existing tmux session when one is already running.
+   This finds supported CLI tools and attaches to an existing session in the selected backend when one is already running.
 
 2. Toggle the CLI view with `<leader>aa`.
 
-   Ajans opens a Neovim terminal wrapper attached to the tmux session. The AI CLI itself keeps running in tmux.
+   For `create = "terminal"`, Ajans opens a Neovim terminal wrapper attached to the persistent multiplexer session. Native windows/tabs and splits remain external to Neovim. In either case, the AI CLI keeps running in tmux or Herdr.
 
 3. Send context from your editor.
 
@@ -308,7 +314,10 @@ For automatic reloads, enable Neovim `autoread`:
 
 ### Session not persisting
 
-Install tmux. Ajans uses tmux for CLI sessions.
+1. Run `:checkhealth ajans` and confirm the intended backend was selected.
+2. For tmux, verify `tmux` is installed.
+3. For Herdr, verify `herdr --version` reports `0.7.0` or newer and restart an incompatible or stale Herdr server.
+4. Set `cli.mux.backend` explicitly if auto-selection chose a different installed backend.
 
 ### Picker action fails
 

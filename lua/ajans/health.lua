@@ -28,12 +28,14 @@ function M.check()
     local valid, message, version = Herdr.validate()
     if valid then
       ok(("Selected terminal multiplexer `herdr` %s is available"):format(version or "unknown"))
-      local status = Herdr.server_status()
-      if status and status.running and status.compatible == false then
+      local status, status_err = Herdr.server_status()
+      if not status then
+        error("Unable to query the selected Herdr server: " .. (status_err or "unknown error"))
+      elseif status.running and status.compatible == false then
         error("The running Herdr server is incompatible with the installed client; restart the Herdr server")
-      elseif status and status.running and status.restart_needed == true then
+      elseif status.running and status.restart_needed == true then
         error("The running Herdr server uses a different version; restart the Herdr server")
-      elseif status and status.running then
+      elseif status.running then
         ok("The selected Herdr server is running")
       else
         ok("The selected Herdr server is stopped and will start when Ajans creates a session")

@@ -136,6 +136,47 @@ describe("health", function()
     )
   end)
 
+  it("reports an unreadable Herdr status instead of calling the server stopped", function()
+    setup_config({ cli = { mux = { backend = "herdr" } } })
+    Session.selected_backend = function()
+      return "herdr"
+    end
+    Herdr.validate = function()
+      return true, nil, "0.7.3"
+    end
+    Herdr.server_status = function()
+      return nil, "malformed status JSON"
+    end
+    local reports = reporter()
+
+    require("ajans.health").check()
+
+    assert.is_true(vim.tbl_contains(reports.error, "Unable to query the selected Herdr server: malformed status JSON"))
+    assert.is_false(
+      vim.tbl_contains(reports.ok, "The selected Herdr server is stopped and will start when Ajans creates a session")
+    )
+  end)
+
+  it("reports a running Herdr server that needs restart", function()
+    setup_config({ cli = { mux = { backend = "herdr" } } })
+    Session.selected_backend = function()
+      return "herdr"
+    end
+    Herdr.validate = function()
+      return true, nil, "0.7.3"
+    end
+    Herdr.server_status = function()
+      return { running = true, compatible = true, restart_needed = true }
+    end
+    local reports = reporter()
+
+    require("ajans.health").check()
+
+    assert.is_true(
+      vim.tbl_contains(reports.error, "The running Herdr server uses a different version; restart the Herdr server")
+    )
+  end)
+
   it("reports the selected Herdr validation error", function()
     setup_config({ cli = { mux = { backend = "herdr" } } })
     Session.selected_backend = function()

@@ -54,12 +54,17 @@ describe("status", function()
           tool = { name = "claude" },
           cwd = "/tmp/project",
           backend = "terminal",
+          mux_backend = "herdr",
+          mux_identity = "herdr:term-1",
           started = true,
         },
         opencode = {
           id = "opencode",
           tool = { name = "opencode" },
           cwd = "/tmp/other",
+          backend = "herdr",
+          external = true,
+          identity = "herdr:term-2",
           parent = { id = "parent" },
         },
       }
@@ -72,11 +77,19 @@ describe("status", function()
         id = "claude",
         tool = "claude",
         cwd = "/tmp/project",
+        backend = "herdr",
+        external = false,
+        terminal = true,
+        identity = "herdr:term-1",
       },
       {
         id = "opencode",
         tool = "opencode",
         cwd = "/tmp/other",
+        backend = "herdr",
+        external = true,
+        terminal = false,
+        identity = "herdr:term-2",
       },
     }, sorted_cli_status())
   end)

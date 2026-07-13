@@ -4,8 +4,13 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **cli:** require tmux for all CLI sessions; remove zellij, mux disablement, and non-tmux session backends
-* **cli:** replace bundled `gemini` tool with `antigravity` (`agy` binary). Rename `cli.tools.gemini` to `cli.tools.antigravity` in your config; install the [Antigravity CLI](https://antigravity.google) instead of Gemini CLI. Existing tmux sessions keyed to `gemini` will not attach as `antigravity`.
+* **cli:** replace legacy multiplexer options with `cli.mux.backend = "auto" | "tmux" | "herdr"`; `auto` may select a running Herdr server instead of tmux
+* **cli:** align the shared backend contract by limiting captured scrollback to 1–1000 lines and fractional split sizes to 0.1–0.9
+* **cli:** replace bundled `gemini` tool with `antigravity` (`agy` binary). Rename `cli.tools.gemini` to `cli.tools.antigravity` in your config; install the [Antigravity CLI](https://antigravity.google) instead of Gemini CLI. Existing sessions keyed to `gemini` will not attach as `antigravity`.
+
+### Features
+
+* **cli:** add full Herdr `>= 0.7.0` session backend support on macOS and Linux, including discovery, persistent attachment, native tabs/splits, input, scrollback, health checks, and automatic backend selection
 
 ## [2.3.0](https://github.com/assagman/ajans.nvim/compare/v2.2.0...v2.3.0) (2026-03-20)
 

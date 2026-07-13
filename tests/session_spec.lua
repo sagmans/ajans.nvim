@@ -16,6 +16,8 @@ local function test_tool()
     local clone = vim.tbl_deep_extend("force", {
       name = self.name,
       cmd = vim.deepcopy(self.cmd),
+      env = vim.deepcopy(self.env),
+      config = vim.deepcopy(self.config),
     }, opts or {})
     clone.clone = self.clone
     return clone
@@ -45,6 +47,7 @@ describe("session mux", function()
   local original_terminal
   local Herdr = require("ajans.cli.session.herdr")
   local original_server_running
+  local original_is_usable
 
   before_each(function()
     original_backends = Session.backends
@@ -58,6 +61,7 @@ describe("session mux", function()
     original_info = Util.info
     original_terminal = package.loaded["ajans.cli.terminal"]
     original_server_running = Herdr.is_server_running
+    original_is_usable = Herdr.is_usable
     Session.backends = {}
     Session.did_setup = true
     Session.backend = "tmux"
@@ -74,6 +78,7 @@ describe("session mux", function()
     vim.env.TMUX = original_tmux
     vim.env.HERDR_ENV = original_herdr_env
     Herdr.is_server_running = original_server_running
+    Herdr.is_usable = original_is_usable
     Util.exec = original_exec
     Util.info = original_info
     package.loaded["ajans.cli.terminal"] = original_terminal
@@ -121,6 +126,15 @@ describe("session mux", function()
     },
     { name = "sole Herdr install", configured = "auto", herdr = true, expected = "herdr" },
     { name = "sole tmux install", configured = "auto", tmux = true, expected = "tmux" },
+    {
+      name = "running but unusable Herdr server",
+      configured = "auto",
+      tmux = true,
+      herdr = true,
+      running = true,
+      usable = false,
+      expected = "tmux",
+    },
     { name = "both installed compatibility tie", configured = "auto", tmux = true, herdr = true, expected = "tmux" },
     { name = "neither installed compatibility fallback", configured = "auto", expected = "tmux" },
   }) do
@@ -131,6 +145,7 @@ describe("session mux", function()
         tmux_host = case.tmux_env == true,
         installed = { tmux = case.tmux == true, herdr = case.herdr == true },
         herdr_running = case.running == true,
+        herdr_usable = case.usable,
       })
 
       assert.are.equal(case.expected, backend)
@@ -167,6 +182,28 @@ describe("session mux", function()
 
     assert.are.same({ "herdr", "tmux" }, vim.fn.sort(vim.tbl_keys(Session.backends)))
     assert.are.equal("tmux", Session.selected_backend())
+  end)
+
+  it("resolves auto selection during session setup", function()
+    setup_config({ cli = { mux = { backend = "auto" } } })
+    Session.backends = {}
+    Session.did_setup = false
+    Session.backend = nil
+    vim.env.HERDR_ENV = nil
+    vim.env.TMUX = nil
+    vim.fn.executable = function(name)
+      return (name == "herdr" or name == "tmux") and 1 or 0
+    end
+    Herdr.is_usable = function()
+      return true
+    end
+    Herdr.is_server_running = function()
+      return true
+    end
+
+    Session.setup()
+
+    assert.are.equal("herdr", Session.selected_backend())
   end)
 
   it("discovers sessions from only the selected backend", function()
@@ -349,6 +386,77 @@ describe("session mux", function()
     assert.are.equal("herdr:terminal-1", terminal.mux_identity)
   end)
 
+  it("does not record a failed backend creation as attached", function()
+    local backend = {}
+    backend.__index = backend
+    function backend:start()
+      return nil
+    end
+    Session.backends = {}
+    Session.register("herdr", backend)
+    Session.backend = "herdr"
+    local parent = Session.new({ tool = test_tool(), cwd = vim.uv.cwd() })
+
+    local returned = Session.attach(parent)
+
+    assert.are.equal(parent, returned)
+    assert.are.same({}, Session._attached)
+    assert.is_false(parent:is_attached())
+  end)
+
+  it("does not report a failed backend creation as attached", function()
+    local backend = {}
+    backend.__index = backend
+    function backend:start()
+      return nil
+    end
+    Session.backends = {}
+    Session.register("herdr", backend)
+    Session.backend = "herdr"
+    local parent = Session.new({ tool = test_tool(), cwd = vim.uv.cwd() })
+    local messages = {}
+    Util.info = function(message)
+      messages[#messages + 1] = message
+    end
+
+    local state, attached = State.attach(State.get_state(parent))
+
+    assert.is_false(attached)
+    assert.is_false(state.attached)
+    assert.are.same({}, messages)
+  end)
+
+  it("retains an attached external session across a transient discovery failure", function()
+    local detached = false
+    local external = {
+      id = "herdr term-1",
+      identity = "herdr:term-1",
+      backend = "herdr",
+      started = true,
+      external = true,
+      is_running = function()
+        return true
+      end,
+      detach = function()
+        detached = true
+      end,
+    }
+    Session.backends = {}
+    Session.register("herdr", {
+      sessions = function()
+        return {}, false
+      end,
+    })
+    Session.backend = "herdr"
+    Session._attached[external.id] = external
+
+    local sessions = Session.sessions()
+
+    assert.are.same({ external }, sessions)
+    assert.are.equal(external, Session._attached[external.id])
+    assert.is_false(detached)
+  end)
+
   it("wraps tmux start commands in terminal sessions", function()
     local cwd = vim.uv.cwd()
     local started = 0
@@ -377,17 +485,22 @@ describe("session mux", function()
       end,
     }
 
-    local parent = Session.new({ tool = test_tool(), cwd = cwd })
+    local tool = test_tool()
+    tool.env = { SECRET = "agent-only", HERDR_SESSION = false }
+    tool.config = { env = { CONFIG_SECRET = "agent-only-too", HERDR_SOCKET_PATH = false } }
+    local parent = Session.new({ tool = tool, cwd = cwd })
     local attached = Session.attach(parent)
 
     assert.are.equal(1, started)
-    assert.are.equal("terminal: " .. parent.sid, attached.id)
+    assert.are.equal("terminal: " .. parent.identity, attached.id)
     assert.are.equal("tmux", attached.mux_backend)
     assert.are.equal(parent.mux_session, attached.mux_session)
     assert.are.equal(parent.identity, attached.mux_identity)
     assert.are.equal(parent, attached.parent)
     assert.are.equal(attached, Session._attached[attached.id])
     assert.are.same({ "tmux", "new", "-A", "-s", parent.sid }, terminal_opts.tool.cmd)
+    assert.are.same({}, terminal_opts.tool.env)
+    assert.are.same({}, terminal_opts.tool.config.env)
   end)
 
   it("returns a terminal tmux command outside tmux", function()

@@ -12,8 +12,13 @@ M.__index = M
 
 M.MIN_VERSION = { 0, 7, 0 }
 M.MIN_VERSION_STRING = "0.7.0"
+M.SNAPSHOT_VERSION = { 0, 7, 2 }
 M.STARTUP_TIMEOUT = 5000
 M.STARTUP_INTERVAL = 100
+M.COMMAND_TIMEOUT = 5000
+M.DISCOVERY_TIMEOUT = 5000
+M.PROCESS_INFO_CONCURRENCY = 8
+M.SEND_CHUNK_BYTES = 24 * 1024
 
 local AGENT_PREFIX = "ajans:"
 local LABEL_ALIASES = {
@@ -26,7 +31,43 @@ local LABEL_ALIASES = {
 ---@return vim.SystemCompleted
 function M._run(cmd, opts)
   opts = vim.tbl_extend("force", { text = true }, opts or {})
-  return vim.system(cmd, opts):wait()
+  local timeout = opts.timeout or M.COMMAND_TIMEOUT
+  opts.timeout = nil
+  return vim.system(cmd, opts):wait(timeout)
+end
+
+---@param commands string[][]
+---@return vim.SystemCompleted[]
+function M._run_many(commands)
+  local results = {}
+  local started = vim.uv.hrtime()
+  local index = 1
+  while index <= #commands do
+    local elapsed = math.floor((vim.uv.hrtime() - started) / 1e6)
+    local remaining = M.DISCOVERY_TIMEOUT - elapsed
+    if remaining <= 0 then
+      for pending = index, #commands do
+        results[pending] = { code = 124, signal = 15, stdout = "", stderr = "Herdr discovery timed out" }
+      end
+      break
+    end
+
+    local jobs = {}
+    local last = math.min(index + M.PROCESS_INFO_CONCURRENCY - 1, #commands)
+    for command_index = index, last do
+      jobs[#jobs + 1] = {
+        index = command_index,
+        job = vim.system(commands[command_index], { text = true }),
+      }
+    end
+    for _, item in ipairs(jobs) do
+      elapsed = math.floor((vim.uv.hrtime() - started) / 1e6)
+      remaining = math.max(1, M.DISCOVERY_TIMEOUT - elapsed)
+      results[item.index] = item.job:wait(remaining)
+    end
+    index = last + 1
+  end
+  return results
 end
 
 ---@param cmd string[]
@@ -159,7 +200,20 @@ end
 ---@class ajans.herdr.ExecOpts
 ---@field notify? boolean
 ---@field stopped_ok? boolean
+---@field redact? boolean
 ---@field system? vim.SystemOpts
+
+---@param cmd string[]
+---@param redact? boolean
+---@return string
+local function display_command(cmd, redact)
+  if not redact then
+    return table.concat(cmd, " ")
+  end
+  local shown = vim.list_slice(cmd, 1, math.min(4, #cmd))
+  shown[#shown + 1] = "<redacted>"
+  return table.concat(shown, " ")
+end
 
 ---@param args string[]
 ---@param opts? ajans.herdr.ExecOpts
@@ -167,12 +221,13 @@ end
 local function execute(args, opts)
   opts = opts or {}
   local cmd = herdr_cmd(args)
+  local rendered = display_command(cmd, opts.redact)
   local system_opts = vim.tbl_extend("force", { text = true }, opts.system or {})
   local ok, result = pcall(M._run, cmd, system_opts)
   if not ok then
     local message = tostring(result)
     if opts.notify ~= false then
-      Util.error(("Failed to execute Herdr command: `%s`\n%s"):format(table.concat(cmd, " "), message))
+      Util.error(("Failed to execute Herdr command: `%s`\n%s"):format(rendered, message))
     end
     return nil, message
   end
@@ -184,7 +239,7 @@ local function execute(args, opts)
     return nil, "stopped"
   end
   if opts.notify ~= false then
-    Util.error(("Herdr command failed: `%s`\n%s"):format(table.concat(cmd, " "), message))
+    Util.error(("Herdr command failed: `%s`\n%s"):format(rendered, message))
   end
   return nil, message
 end
@@ -200,20 +255,26 @@ function M.request(args, opts)
   local value = decode(result.stdout)
   if type(value) ~= "table" then
     if not opts or opts.notify ~= false then
-      Util.error(("Herdr command returned malformed JSON: `%s`"):format(table.concat(herdr_cmd(args), " ")))
+      Util.error(
+        ("Herdr command returned malformed JSON: `%s`"):format(display_command(herdr_cmd(args), opts and opts.redact))
+      )
     end
     return nil, "malformed JSON"
   end
   if type(value.error) == "table" then
     local message = error_message({ code = 1, stdout = result.stdout, stderr = "", signal = 0 })
     if not opts or opts.notify ~= false then
-      Util.error(("Herdr command failed: `%s`\n%s"):format(table.concat(herdr_cmd(args), " "), message))
+      Util.error(
+        ("Herdr command failed: `%s`\n%s"):format(display_command(herdr_cmd(args), opts and opts.redact), message)
+      )
     end
     return nil, message
   end
   if type(value.result) ~= "table" then
     if not opts or opts.notify ~= false then
-      Util.error(("Herdr JSON response is missing `result`: `%s`"):format(table.concat(herdr_cmd(args), " ")))
+      Util.error(
+        ("Herdr JSON response is missing `result`: `%s`"):format(display_command(herdr_cmd(args), opts and opts.redact))
+      )
     end
     return nil, "missing `result`"
   end
@@ -228,20 +289,47 @@ function M.command(args, opts)
   return result and result.stdout or nil, err
 end
 
----@return table?
+---@return table?, string?
 function M.server_status()
   local ok, result = pcall(M._run, { "herdr", "status", "server", "--json" }, { text = true })
-  if not ok or result.code ~= 0 then
-    return
+  if not ok then
+    return nil, tostring(result)
+  end
+  if result.code ~= 0 then
+    return nil, error_message(result)
   end
   local value = decode(result.stdout)
-  return type(value) == "table" and value or nil
+  if type(value) ~= "table" or type(value.running) ~= "boolean" then
+    return nil, "Herdr status returned malformed JSON"
+  end
+  return value
+end
+
+---@param status table
+---@return string?
+local function server_incompatibility(status)
+  if status.running and status.compatible == false then
+    return "The running Herdr server is incompatible with the installed client; restart the Herdr server"
+  end
+  if status.running and status.restart_needed == true then
+    return "The running Herdr server uses a different version; restart the Herdr server"
+  end
 end
 
 ---@return boolean
 function M.is_server_running()
   local status = M.server_status()
-  return status ~= nil and status.running == true
+  return status ~= nil and status.running == true and server_incompatibility(status) == nil
+end
+
+---@return boolean
+function M.is_usable()
+  local valid = M.validate()
+  if not valid then
+    return false
+  end
+  local status = M.server_status()
+  return status ~= nil and server_incompatibility(status) == nil
 end
 
 ---@return boolean
@@ -251,7 +339,17 @@ function M.ensure_server()
     Util.error(err or "Herdr is unavailable")
     return false
   end
-  if M.is_server_running() then
+  local status, status_err = M.server_status()
+  if not status then
+    Util.error(status_err or "Unable to query the Herdr server")
+    return false
+  end
+  local incompatible = server_incompatibility(status)
+  if incompatible then
+    Util.error(incompatible)
+    return false
+  end
+  if status.running then
     return true
   end
   local ok = pcall(M._spawn, { "herdr", "server" }, {
@@ -266,7 +364,9 @@ function M.ensure_server()
     return false
   end
   if not M._wait(M.STARTUP_TIMEOUT, M.is_server_running, M.STARTUP_INTERVAL) then
-    Util.error(("Herdr server did not become ready within %dms"):format(M.STARTUP_TIMEOUT))
+    local _, startup_status_err = M.server_status()
+    local detail = startup_status_err or "check `herdr status server --json` and the Herdr server log"
+    Util.error(("Herdr server did not become ready within %dms: %s"):format(M.STARTUP_TIMEOUT, detail))
     return false
   end
   return true
@@ -338,8 +438,11 @@ end
 ---@param pane table
 ---@return table?
 local function pane_process_info(pane)
-  local result = M.request({ "pane", "process-info", "--pane", pane.pane_id }, { notify = true })
+  local result, err = M.request({ "pane", "process-info", "--pane", pane.pane_id }, { notify = false })
   if type(result) ~= "table" then
+    if err and not err:find("pane_not_found", 1, true) and not err:find("not found", 1, true) then
+      Util.error(("Failed to inspect Herdr pane `%s`: %s"):format(pane.pane_id, err))
+    end
     return
   end
   if type(result.process_info) ~= "table" then
@@ -349,14 +452,54 @@ local function pane_process_info(pane)
   return result.process_info
 end
 
+---@param panes table[]
+---@return table<string,table>, boolean
+local function pane_process_infos(panes)
+  local commands = {}
+  for _, pane in ipairs(panes) do
+    commands[#commands + 1] = herdr_cmd({ "pane", "process-info", "--pane", pane.pane_id })
+  end
+  local ok, results = pcall(M._run_many, commands)
+  if not ok then
+    Util.error("Failed to inspect Herdr panes: " .. tostring(results))
+    return {}, false
+  end
+  local infos = {}
+  local failures = 0
+  local first_failure
+  for index, pane in ipairs(panes) do
+    local result = results[index]
+    local value = result and result.code == 0 and decode(result.stdout) or nil
+    local info = value and value.result and value.result.process_info
+    if type(info) == "table" then
+      infos[pane.pane_id] = info
+    elseif result and result.code ~= 0 then
+      local err = error_message(result)
+      if not err:find("pane_not_found", 1, true) and not err:find("not found", 1, true) then
+        failures = failures + 1
+        first_failure = first_failure or ("pane `%s`: %s"):format(pane.pane_id, err)
+      end
+    else
+      failures = failures + 1
+      first_failure = first_failure or ("pane `%s`: malformed response"):format(pane.pane_id)
+    end
+  end
+  if failures > 0 then
+    Util.error(("Failed to inspect %d Herdr pane(s); first failure: %s"):format(failures, first_failure))
+  end
+  return infos, failures == 0
+end
+
 ---@param pane table
 ---@param agent table?
 ---@param tools table<string,ajans.cli.Tool>
+---@param tool_names string[]
+---@param info table?
 ---@return ajans.cli.Tool?, table?, ajans.cli.Proc?
-local function match_pane(pane, agent, tools)
+local function match_pane(pane, agent, tools, tool_names, info)
   local name = tool_name_for_owned_agent(agent and agent.name)
   if name then
-    return tools[name], nil, nil
+    return tools[name], info, nil
   end
   local labels = {
     agent and agent.agent,
@@ -367,16 +510,13 @@ local function match_pane(pane, agent, tools)
   for index = 1, 4 do
     name = M.tool_name_for_label(labels[index])
     if name then
-      return tools[name], nil, nil
+      return tools[name], info, nil
     end
   end
 
-  local info = pane_process_info(pane)
   for _, process in ipairs((info and info.foreground_processes) or {}) do
     local proc = to_proc(process)
-    local names = vim.tbl_keys(tools)
-    table.sort(names)
-    for _, tool_name in ipairs(names) do
+    for _, tool_name in ipairs(tool_names) do
       if tools[tool_name]:is_proc(proc) then
         return tools[tool_name], info, proc
       end
@@ -385,81 +525,157 @@ local function match_pane(pane, agent, tools)
   return nil, info, nil
 end
 
----@return ajans.cli.session.State[]
-function M.sessions()
-  local result, err = M.request({ "api", "snapshot" }, { stopped_ok = true })
-  if not result and err == "stopped" then
-    return {}
+---@return boolean
+function M.supports_snapshot()
+  local version = M.parse_version(M.version())
+  return version ~= nil and M.version_at_least(version, M.SNAPSHOT_VERSION)
+end
+
+---@param resource "workspace"|"tab"|"pane"|"agent"
+---@param field "workspaces"|"tabs"|"panes"|"agents"
+---@return table[]?, string?
+local function legacy_list(resource, field)
+  local result, err = M.request({ resource, "list" }, { stopped_ok = true })
+  if not result then
+    return nil, err
   end
-  if type(result) ~= "table" or type(result.snapshot) ~= "table" then
-    if result ~= nil then
-      Util.error("Herdr snapshot response is missing `snapshot`")
+  if type(result[field]) ~= "table" then
+    Util.error(("Herdr %s list response is missing `%s`"):format(resource, field))
+    return nil, "malformed legacy inventory"
+  end
+  return result[field]
+end
+
+---@return table?, string?
+local function legacy_snapshot()
+  local snapshot = {}
+  for _, item in ipairs({
+    { resource = "workspace", field = "workspaces" },
+    { resource = "tab", field = "tabs" },
+    { resource = "pane", field = "panes" },
+    { resource = "agent", field = "agents" },
+  }) do
+    local values, err = legacy_list(item.resource, item.field)
+    if not values then
+      return nil, err
     end
-    return {}
+    snapshot[item.field] = values
+  end
+  return snapshot
+end
+
+---@return table?, string?
+function M.snapshot()
+  if not M.supports_snapshot() then
+    return legacy_snapshot()
+  end
+  local result, err = M.request({ "api", "snapshot" }, { stopped_ok = true })
+  if not result then
+    return nil, err
+  end
+  if type(result.snapshot) ~= "table" then
+    Util.error("Herdr snapshot response is missing `snapshot`")
+    return nil, "malformed snapshot"
+  end
+  for _, field in ipairs({ "workspaces", "tabs", "panes", "agents" }) do
+    if type(result.snapshot[field]) ~= "table" then
+      Util.error(("Herdr snapshot response is missing `%s`"):format(field))
+      return nil, "malformed snapshot"
+    end
+  end
+  return result.snapshot
+end
+
+---@return ajans.cli.session.State[], boolean
+function M.sessions()
+  local snapshot, err = M.snapshot()
+  if not snapshot then
+    return {}, err == "stopped"
   end
 
-  local snapshot = result.snapshot
+  local malformed_inventory = false
   local agents = {}
-  for _, agent in ipairs(snapshot.agents or {}) do
+  for _, agent in ipairs(snapshot.agents) do
     if agent.pane_id then
       agents[agent.pane_id] = agent
+    else
+      malformed_inventory = true
     end
   end
   local workspaces = {}
-  for _, workspace in ipairs(snapshot.workspaces or {}) do
-    workspaces[workspace.workspace_id] = workspace
+  for _, workspace in ipairs(snapshot.workspaces) do
+    if workspace.workspace_id then
+      workspaces[workspace.workspace_id] = workspace
+    else
+      malformed_inventory = true
+    end
   end
   local tabs = {}
-  for _, tab in ipairs(snapshot.tabs or {}) do
-    tabs[tab.tab_id] = tab
+  for _, tab in ipairs(snapshot.tabs) do
+    if tab.tab_id then
+      tabs[tab.tab_id] = tab
+    else
+      malformed_inventory = true
+    end
+  end
+
+  local panes = {}
+  local malformed_pane = false
+  for _, pane in ipairs(snapshot.panes) do
+    if pane.pane_id and pane.terminal_id and pane.workspace_id and pane.tab_id then
+      panes[#panes + 1] = pane
+    else
+      malformed_pane = true
+    end
   end
 
   local tools = Config.tools()
+  local tool_names = vim.tbl_keys(tools)
+  table.sort(tool_names)
+  local process_infos, process_complete = pane_process_infos(panes)
   local sessions = {}
-  local malformed_pane = false
-  for _, pane in ipairs(snapshot.panes or {}) do
-    if pane.pane_id and pane.terminal_id and pane.workspace_id and pane.tab_id then
-      local agent = agents[pane.pane_id]
-      local tool, process_info, proc = match_pane(pane, agent, tools)
-      if tool then
-        local cwd = proc and proc.cwd
-          or agent and (agent.foreground_cwd or agent.cwd)
-          or pane.foreground_cwd
-          or pane.cwd
-          or vim.uv.cwd()
-        local name = agent and agent.name
-        local placement
-        if name and workspaces[pane.workspace_id] and workspaces[pane.workspace_id].label == name then
-          placement = "workspace"
-        elseif name and tabs[pane.tab_id] and tabs[pane.tab_id].label == name then
-          placement = "tab"
-        elseif name and name:find("^" .. AGENT_PREFIX) then
-          placement = "split"
-        end
-        sessions[#sessions + 1] = {
-          id = "herdr " .. pane.terminal_id,
-          identity = "herdr:" .. pane.terminal_id,
-          cwd = cwd,
-          tool = tool,
-          pids = process_pids(process_info),
-          mux_session = pane.workspace_id,
-          herdr_terminal_id = pane.terminal_id,
-          herdr_pane_id = pane.pane_id,
-          herdr_workspace_id = pane.workspace_id,
-          herdr_tab_id = pane.tab_id,
-          herdr_agent = agent ~= nil,
-          herdr_name = name,
-          herdr_placement = placement,
-        }
+  for _, pane in ipairs(panes) do
+    local agent = agents[pane.pane_id]
+    local tool, process_info, proc = match_pane(pane, agent, tools, tool_names, process_infos[pane.pane_id])
+    if tool then
+      local cwd = proc and proc.cwd
+        or agent and (agent.foreground_cwd or agent.cwd)
+        or pane.foreground_cwd
+        or pane.cwd
+        or vim.uv.cwd()
+      local name = agent and agent.name
+      local placement
+      if name and workspaces[pane.workspace_id] and workspaces[pane.workspace_id].label == name then
+        placement = "workspace"
+      elseif name and tabs[pane.tab_id] and tabs[pane.tab_id].label == name then
+        placement = "tab"
+      elseif name and name:find("^" .. AGENT_PREFIX) then
+        placement = "split"
       end
-    else
-      malformed_pane = true
+      sessions[#sessions + 1] = {
+        id = "herdr " .. pane.terminal_id,
+        identity = "herdr:" .. pane.terminal_id,
+        cwd = cwd,
+        tool = tool,
+        pids = process_pids(process_info),
+        mux_session = pane.workspace_id,
+        herdr_terminal_id = pane.terminal_id,
+        herdr_pane_id = pane.pane_id,
+        herdr_workspace_id = pane.workspace_id,
+        herdr_tab_id = pane.tab_id,
+        herdr_agent = agent ~= nil,
+        herdr_name = name,
+        herdr_placement = placement,
+      }
     end
   end
   if malformed_pane then
     Util.error("Herdr snapshot contains a pane without stable terminal, pane, workspace, or tab IDs")
   end
-  return sessions
+  if malformed_inventory then
+    Util.error("Herdr snapshot contains a workspace, tab, or agent without a stable ID")
+  end
+  return sessions, process_complete and not malformed_pane and not malformed_inventory
 end
 
 function M:init()
@@ -473,7 +689,7 @@ end
 
 ---@return string
 function M:agent_name()
-  return AGENT_PREFIX .. self.sid
+  return ("%s%s %s"):format(AGENT_PREFIX, self.tool.name, vim.fn.sha256(self.cwd):sub(1, 12))
 end
 
 ---@return string[], string[]
@@ -496,11 +712,15 @@ function M:launch_argv()
     for _, key in ipairs(unset) do
       vim.list_extend(wrapped, { "-u", key })
     end
+    wrapped[#wrapped + 1] = "--"
     vim.list_extend(wrapped, argv)
     argv = wrapped
   end
   return argv, env_args
 end
+
+---@type fun(kind:"workspace"|"tab"|"pane", id:string):boolean
+local rollback
 
 ---@param workspace_id string
 ---@param tab_id string
@@ -525,7 +745,7 @@ function M:launch(workspace_id, tab_id, split)
   vim.list_extend(cmd, env_args)
   cmd[#cmd + 1] = "--"
   vim.list_extend(cmd, argv)
-  local result = M.request(cmd)
+  local result = M.request(cmd, { redact = true })
   local agent = result and result.agent
   if
     type(agent) ~= "table"
@@ -534,6 +754,9 @@ function M:launch(workspace_id, tab_id, split)
     or type(agent.workspace_id) ~= "string"
     or type(agent.tab_id) ~= "string"
   then
+    if type(agent) == "table" and type(agent.pane_id) == "string" then
+      rollback("pane", agent.pane_id)
+    end
     if result ~= nil then
       Util.error("Herdr agent start response is missing stable terminal, pane, workspace, or tab IDs")
     end
@@ -565,8 +788,16 @@ end
 
 ---@param kind "workspace"|"tab"|"pane"
 ---@param id string
-local function rollback(kind, id)
-  M.command({ kind, "close", id }, { notify = false })
+---@return boolean
+rollback = function(kind, id)
+  local args = { kind, "close", id }
+  for _ = 1, 2 do
+    if M.command(args, { notify = false }) ~= nil then
+      return true
+    end
+  end
+  Util.error(("Failed to clean up Herdr %s `%s`; run `herdr %s close %s` manually"):format(kind, id, kind, id))
+  return false
 end
 
 ---@return ajans.cli.terminal.Cmd?
@@ -717,8 +948,12 @@ function M:size_split(pane_id, direction)
       return false
     end
     desired = size / dimension
+    if desired < 0.1 or desired > 0.9 then
+      Util.error(("Herdr split size %d cells falls outside the shared 10%%-90%% layout range"):format(size))
+      return false
+    end
   end
-  desired = math.max(0.05, math.min(0.95, desired))
+  desired = math.max(0.1, math.min(0.9, desired))
   local current = 1 - split.ratio
   local amount = math.abs(desired - current)
   if amount < 0.000001 then
@@ -740,7 +975,19 @@ function M:size_split(pane_id, direction)
     "--amount",
     ("%.6g"):format(amount),
   })
-  return resize ~= nil and (not resize.resize or resize.resize.changed ~= false)
+  local final_layout = resize and resize.resize and resize.resize.layout
+  local final_split = type(final_layout) == "table" and containing_split(final_layout, pane_id, direction) or nil
+  if not final_split then
+    Util.error("Herdr pane resize response did not include the resized split layout")
+    return false
+  end
+  local actual = 1 - final_split.ratio
+  local tolerance = size > 1 and (1 / (direction == "right" and split.rect.width or split.rect.height)) or 0.01
+  if math.abs(actual - desired) > tolerance then
+    Util.error(("Herdr resized pane to %.3f instead of configured %.3f"):format(actual, desired))
+    return false
+  end
+  return resize.resize.changed ~= false
 end
 
 ---@return nil
@@ -777,7 +1024,7 @@ end
 
 ---@return ajans.cli.terminal.Cmd?
 function M:attach()
-  if not self.herdr_terminal_id then
+  if self.external or not self.herdr_terminal_id then
     return
   end
   if self.herdr_agent then
@@ -790,10 +1037,46 @@ function M:detach() end
 
 ---@return boolean
 function M:is_running()
+  local args
   if self.herdr_agent and self.herdr_terminal_id then
-    return M.request({ "agent", "get", self.herdr_terminal_id }, { notify = false }) ~= nil
+    args = { "agent", "get", self.herdr_terminal_id }
+  elseif self.herdr_pane_id then
+    args = { "pane", "get", self.herdr_pane_id }
+  else
+    return false
   end
-  return self.herdr_pane_id ~= nil and M.request({ "pane", "get", self.herdr_pane_id }, { notify = false }) ~= nil
+  local result, err = M.request(args, { notify = false, stopped_ok = true })
+  if result then
+    return true
+  end
+  if err == "stopped" or (err and (err:find("not_found", 1, true) or err:find("not found", 1, true))) then
+    return false
+  end
+  Util.error("Unable to verify Herdr session liveness: " .. (err or "unknown error"))
+  return true
+end
+
+---@param text string
+---@return string[]
+local function send_chunks(text)
+  local chunks = {}
+  local start = 1
+  while start <= #text do
+    local next_start = math.min(start + M.SEND_CHUNK_BYTES, #text + 1)
+    while next_start <= #text do
+      local byte = text:byte(next_start)
+      if not byte or byte < 0x80 or byte >= 0xC0 then
+        break
+      end
+      next_start = next_start - 1
+    end
+    if next_start <= start then
+      next_start = math.min(start + M.SEND_CHUNK_BYTES, #text + 1)
+    end
+    chunks[#chunks + 1] = text:sub(start, next_start - 1)
+    start = next_start
+  end
+  return chunks
 end
 
 ---@param text string
@@ -804,18 +1087,37 @@ function M:send(text)
     return
   end
   self._sending = true
+  self._last_send_ok = true
   while #self._send_queue > 0 do
     local next = table.remove(self._send_queue, 1)
     if self.tool.mux_focus then
       M.command({ "pane", "send-keys", self.herdr_pane_id, "escape", "[", "I" })
     end
-    M.request({ "agent", "send", self.herdr_terminal_id, next })
+    for _, chunk in ipairs(send_chunks(next)) do
+      local result
+      if self.herdr_agent then
+        result = M.request({ "agent", "send", self.herdr_terminal_id, chunk }, { redact = true })
+      else
+        result = M.command({ "pane", "send-text", self.herdr_pane_id, chunk }, { redact = true })
+      end
+      if not result then
+        self._last_send_ok = false
+        self._send_queue = {}
+        break
+      end
+    end
   end
   self._sending = false
+  return self._last_send_ok
 end
 
 function M:submit()
-  M.command({ "pane", "send-keys", self.herdr_pane_id, "enter" })
+  if self._last_send_ok == false then
+    self._last_send_ok = nil
+    return false
+  end
+  self._last_send_ok = nil
+  return M.command({ "pane", "send-keys", self.herdr_pane_id, "enter" }) ~= nil
 end
 
 ---@return string?
@@ -823,6 +1125,8 @@ function M:dump()
   if not self.herdr_pane_id then
     return
   end
+  -- Unlike Herdr's inventory/control commands, `pane read` prints the requested
+  -- text directly; `--ansi` preserves terminal escape sequences.
   return M.command({
     "pane",
     "read",

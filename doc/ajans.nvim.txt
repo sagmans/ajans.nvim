@@ -19,7 +19,7 @@ Table of Contents                            *ajans.nvim-table-of-contents*
 
 **ajans.nvim** is a simplified fork of sidekick.nvim focused on local AI CLI
 workflows in Neovim. Start or attach to CLI tools, send editor context, and
-keep sessions alive with tmux.
+keep sessions alive with tmux or Herdr.
 
 This file is the in-editor Neovim help reference. Open it with
 `:help ajans.nvim`. The `.txt` extension follows Neovim's standard helpdoc
@@ -33,7 +33,7 @@ FEATURES                                *ajans.nvim-ajans.nvim-features*
   diagnostics, quickfix entries, functions, and classes.
 - Prompt library for common tasks such as explaining code, fixing issues,
   reviews, tests, and documentation.
-- Session persistence with tmux.
+- Session persistence with tmux or Herdr.
 - File watching that runs `:checktime` after external changes.
 - Picker actions and statusline helpers for plugin integration.
 
@@ -43,9 +43,9 @@ REQUIREMENTS                        *ajans.nvim-ajans.nvim-requirements*
 - snacks.nvim for better prompt/tool selection (optional)
 - nvim-treesitter-textobjects main branch for `{function}` and `{class}`
   context variables (optional)
-- tmux for persistent CLI sessions
+- tmux, or Herdr >= 0.7.0 on macOS/Linux, for persistent CLI sessions
 - AI CLI tools such as Codex, Claude, Copilot, Antigravity, etc. (optional)
-- lsof and ps on Unix-like systems for running-session discovery
+- lsof and ps with tmux on Unix-like systems for running-session discovery
   (optional, but recommended)
 
 QUICK START                          *ajans.nvim-ajans.nvim-quick-start*
@@ -92,6 +92,7 @@ Configure with:
           split = { width = 80, height = 20 },
         },
         mux = {
+          backend = "auto", -- or "tmux" / "herdr"
           create = "split",
         },
         tools = {
@@ -106,11 +107,13 @@ Configure with:
 
 AI CLI INTEGRATION            *ajans.nvim-ajans.nvim-ai-cli-integration*
 
-Ajans runs local AI CLI tools through tmux so sessions persist across Neovim
-windows and restarts. When needed, Ajans opens a lightweight Neovim terminal
-wrapper that attaches to the tmux session while helper prompts can include
-locations, selections, diagnostics, quickfix entries, buffers, functions, and
-classes.
+Ajans runs local AI CLI tools through tmux or Herdr so sessions persist across
+Neovim windows and restarts. Backend `auto` prefers the multiplexer hosting
+Neovim, then a running Herdr server, the sole usable backend, and tmux as
+the compatibility tie-breaker. When needed, Ajans opens a lightweight Neovim
+terminal wrapper attached to the persistent session. Helper prompts can
+include locations, selections, diagnostics, quickfix entries, buffers,
+functions, and classes.
 
 API summary:
 
@@ -192,7 +195,9 @@ CLI tools not starting? ~
 
 Terminal sessions not persisting? ~
 
-Install tmux. Ajans always runs CLI sessions through tmux.
+Run `:checkhealth ajans` and install the selected backend. Use tmux or Herdr
+>= 0.7.0 on macOS/Linux. Set `cli.mux.backend` explicitly if auto-selection
+chose the wrong installed backend.
 
 Do I need a GitHub Copilot subscription? ~
 

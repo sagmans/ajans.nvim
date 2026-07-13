@@ -179,7 +179,7 @@ end
 ---@return ajans.cli.State state, boolean attached whether we just attached
 function M.attach(state, opts)
   opts = opts or {}
-  local attached = state.session == nil or not state.attached
+  local was_attached = state.session ~= nil and state.attached
   local tool = state.tool
 
   -- if the session is already attached, the below is a no-op
@@ -187,6 +187,7 @@ function M.attach(state, opts)
   session = Session.attach(session)
 
   state = M.get_state(session) -- update state
+  local attached = not was_attached and state.attached
   local terminal = state.terminal
   if terminal then
     if opts.show then
