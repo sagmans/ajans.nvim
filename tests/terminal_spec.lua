@@ -65,6 +65,30 @@ describe("terminal", function()
     assert.is_false(put_called)
   end)
 
+  it("accepts the initial prompt while fresh tmux discovery catches up", function()
+    local Terminal = require("ajans.cli.terminal")
+    local parent_checks = 0
+    local terminal = setmetatable({
+      fresh = true,
+      parent = {
+        backend = "tmux",
+        accepts_automated_input = function()
+          parent_checks = parent_checks + 1
+          return false
+        end,
+      },
+      is_running = function()
+        return true
+      end,
+    }, Terminal)
+
+    assert.is_true(terminal:accepts_automated_input())
+    assert.are.equal(0, parent_checks)
+    terminal.parent.tmux_pid = 42
+    assert.is_false(terminal:accepts_automated_input())
+    assert.are.equal(1, parent_checks)
+  end)
+
   it("skips send loop when no timer exists", function()
     local Terminal = require("ajans.cli.terminal")
     local terminal = setmetatable({ timer = nil }, Terminal)

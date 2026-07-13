@@ -99,7 +99,7 @@ Session attach/detach emits user autocmds:
 - `User AjansCliAttach`
 - `User AjansCliDetach`
 
-`lua/ajans/status.lua` listens to those events and exposes `require("ajans.status").cli()` for statusline integrations.
+`lua/ajans/status.lua` listens to those events and exposes `require("ajans.status").cli()` for statusline integrations. Periodic liveness refreshes are asynchronous, so statusline rendering only reads cached data.
 
 ## Boundaries
 

@@ -1,5 +1,6 @@
 ---@module 'luassert'
 
+local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
 local Herdr = require("ajans.cli.session.herdr")
 local Util = require("ajans.util")
@@ -83,8 +84,10 @@ describe("herdr backend", function()
   local original_executable
   local original_has
   local original_system
+  local original_client_run
   local original_hrtime
   local original_run
+  local original_run_async
   local original_run_many
   local original_spawn
   local original_wait
@@ -106,8 +109,10 @@ describe("herdr backend", function()
     original_executable = vim.fn.executable
     original_has = vim.fn.has
     original_system = vim.system
+    original_client_run = Client.run
     original_hrtime = vim.uv.hrtime
     original_run = Herdr._run
+    original_run_async = Herdr._run_async
     original_run_many = Herdr._run_many
     Herdr._run_many = function(commands)
       return vim.tbl_map(function(cmd)
@@ -146,8 +151,10 @@ describe("herdr backend", function()
     vim.fn.executable = original_executable
     vim.fn.has = original_has
     vim.system = original_system
+    Client.run = original_client_run
     vim.uv.hrtime = original_hrtime
     Herdr._run = original_run
+    Herdr._run_async = original_run_async
     Herdr._run_many = original_run_many
     Herdr._spawn = original_spawn
     Herdr._wait = original_wait
@@ -261,6 +268,29 @@ describe("herdr backend", function()
     assert.are.equal(implementation.COMMAND_TIMEOUT, waited)
   end)
 
+  it("routes every sensitive command away from process arguments", function()
+    local implementation = fresh_herdr()
+    local routed = {}
+    Client.run = function(cmd)
+      routed[#routed + 1] = vim.deepcopy(cmd)
+      return completed("{}\n")
+    end
+    vim.system = function()
+      error("sensitive values must not reach vim.system")
+    end
+    local commands = {
+      { "herdr", "agent", "start", "ajans:test", "--", "agent", "secret" },
+      { "herdr", "agent", "send", "term-1", "secret prompt" },
+      { "herdr", "pane", "send-text", "pane-1", "secret context" },
+    }
+
+    for _, cmd in ipairs(commands) do
+      implementation._run(cmd)
+    end
+
+    assert.are.same(commands, routed)
+  end)
+
   it("bounds process-info discovery concurrency", function()
     local implementation = fresh_herdr()
     local active = 0
@@ -324,6 +354,28 @@ describe("herdr backend", function()
     for index = 2, #results do
       assert.are.equal(124, results[index].code)
     end
+  end)
+
+  it("passes the remaining global deadline to later process-info waits", function()
+    local implementation = fresh_herdr()
+    local tick = 0
+    local waits = {}
+    vim.uv.hrtime = function()
+      tick = tick + 1
+      return tick <= 3 and 0 or 4 * 1e9
+    end
+    vim.system = function()
+      return {
+        wait = function(_, timeout)
+          waits[#waits + 1] = timeout
+          return completed()
+        end,
+      }
+    end
+
+    implementation._run_many({ { "first" }, { "second" } })
+
+    assert.are.same({ implementation.DISCOVERY_TIMEOUT, 1000 }, waits)
   end)
 
   it("decodes JSON command results without overriding the selected Herdr namespace", function()
@@ -591,6 +643,45 @@ describe("herdr backend", function()
     assert.is_false(Herdr.ensure_server())
     assert.matches("did not become ready", errors[1])
   end)
+
+  for _, case in ipairs({
+    {
+      name = "incompatible protocol",
+      status = { running = true, compatible = false, restart_needed = false },
+      expected = "incompatible",
+    },
+    {
+      name = "restart-required server",
+      status = { running = true, compatible = true, restart_needed = true },
+      expected = "different version",
+    },
+  }) do
+    it("does not spawn for a " .. case.name, function()
+      local spawned = 0
+      local waited = 0
+      local errors = {}
+      Herdr.validate = function()
+        return true
+      end
+      Herdr.server_status = function()
+        return case.status
+      end
+      Herdr._spawn = function()
+        spawned = spawned + 1
+      end
+      Herdr._wait = function()
+        waited = waited + 1
+      end
+      Util.error = function(message)
+        errors[#errors + 1] = message
+      end
+
+      assert.is_false(Herdr.ensure_server())
+      assert.are.equal(0, spawned)
+      assert.are.equal(0, waited)
+      assert.matches(case.expected, errors[1])
+    end)
+  end
 
   it("discovers every pane using stable names, label aliases, and process metadata fallback", function()
     setup_config({
@@ -1723,6 +1814,30 @@ describe("herdr backend", function()
       assert.is_true(session:is_running())
     end)
   end
+
+  it("checks Herdr liveness without blocking scheduled status refresh", function()
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+    })
+    local running
+    Herdr._run_async = function(cmd, opts, callback)
+      assert.are.same({ "herdr", "agent", "get", "term-1" }, cmd)
+      assert.are.equal(Herdr.LIVENESS_TIMEOUT, opts.timeout)
+      callback(success({ type = "agent_info" }))
+    end
+
+    session:is_running_async(function(value)
+      running = value
+    end)
+
+    vim.wait(100, function()
+      return running ~= nil
+    end)
+    assert.is_true(running)
+  end)
 
   it("returns false when a Herdr pane disappears", function()
     local errors = {}

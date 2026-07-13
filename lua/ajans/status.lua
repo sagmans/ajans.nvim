@@ -30,13 +30,16 @@ local function normalize_cli_session(id, session)
   return ret
 end
 
-local function update_cli_status()
-  local Session = require("ajans.cli.session")
+local function update_cli_status(sessions)
   cli_sessions = {}
-  for id, session in pairs(Session.attached()) do
+  for id, session in pairs(sessions) do
     cli_sessions[id] = normalize_cli_session(id, session)
   end
   cli_last_update = vim.uv.now()
+end
+
+local function update_cli_snapshot()
+  update_cli_status(require("ajans.cli.session").attached_snapshot())
 end
 
 local function schedule_cli_update()
@@ -45,8 +48,10 @@ local function schedule_cli_update()
   end
   cli_update_pending = true
   vim.schedule(function()
-    cli_update_pending = false
-    update_cli_status()
+    require("ajans.cli.session").attached_async(function(sessions)
+      cli_update_pending = false
+      update_cli_status(sessions)
+    end)
   end)
 end
 
@@ -54,10 +59,10 @@ function M.setup()
   vim.api.nvim_create_autocmd("User", {
     group = require("ajans.config").augroup,
     pattern = { "AjansCliAttach", "AjansCliDetach" },
-    callback = update_cli_status,
+    callback = update_cli_snapshot,
   })
 
-  update_cli_status()
+  update_cli_snapshot()
 end
 
 --- Get CLI session status

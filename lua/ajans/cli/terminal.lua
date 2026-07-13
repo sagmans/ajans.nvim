@@ -20,6 +20,7 @@ local Util = require("ajans.util")
 ---@field win? integer
 ---@field scrollback? ajans.cli.Scrollback
 ---@field normal_mode? boolean
+---@field fresh? boolean created for a backend session that was not previously running
 local M = {}
 M.__index = M
 M.priority = 100
@@ -138,6 +139,11 @@ end
 
 function M:accepts_automated_input()
   if self.parent and self.parent.accepts_automated_input then
+    -- A fresh embedded tmux session has no pane PID until discovery catches up.
+    -- Its terminal readiness queue is the safe authority during that window.
+    if self.fresh and self.parent.backend == "tmux" and not self.parent.tmux_pid then
+      return self:is_running()
+    end
     return self.parent:accepts_automated_input()
   end
   return self:is_running()

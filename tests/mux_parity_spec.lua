@@ -254,26 +254,71 @@ local adapters = {
     end,
     input_failure_safety = function()
       setup_config("tmux")
-      local calls = {}
-      local session = tmux_session()
-      Util.exec = function(cmd)
-        calls[#calls + 1] = vim.deepcopy(cmd)
-        return cmd[2] == "load-buffer" and {} or nil
+      vim.defer_fn = function(callback)
+        callback()
+        return 1
       end
 
-      session:send("repository context")
-      session:submit()
+      for _, failure in ipairs({ "focus", "load-buffer", "paste-buffer" }) do
+        local calls = {}
+        local session = tmux_session({ mux_focus = failure == "focus" })
+        Util.exec = function(cmd)
+          calls[#calls + 1] = vim.deepcopy(cmd)
+          local stage = cmd[2]
+          if stage == "send-keys" and cmd[#cmd] == "I" then
+            stage = "focus"
+          end
+          if stage == failure then
+            return nil
+          end
+          return {}
+        end
 
-      assert.are.equal(2, #calls)
-      assert.are.equal("load-buffer", calls[1][2])
-      assert.are.equal("paste-buffer", calls[2][2])
+        session:send("repository context")
+        session:submit()
 
-      calls = {}
+        assert.is_false(vim.tbl_contains(
+          vim.tbl_map(function(cmd)
+            return cmd[#cmd]
+          end, calls),
+          "Enter"
+        ))
+        calls = {}
+        Util.exec = function(cmd)
+          calls[#calls + 1] = vim.deepcopy(cmd)
+          return {}
+        end
+        session:send("fresh context")
+        session:submit()
+        assert.are.equal("Enter", calls[#calls][#calls[#calls]])
+      end
+
+      local calls = {}
       local unresolved = tmux_session({ external = true })
       unresolved.tmux_pane_id = nil
+      Util.exec = function(cmd)
+        calls[#calls + 1] = cmd
+        return {}
+      end
       unresolved:send("repository context")
       assert.are.same({}, calls)
       assert.is_false(unresolved._last_send_ok)
+
+      local process = "zsh"
+      local protected = tmux_session()
+      protected.tool.is_proc = function(_, proc)
+        return proc.cmd == "contract-agent"
+      end
+      Procs.new = function()
+        return {
+          walk = function(_, _, callback)
+            callback({ cmd = process })
+          end,
+        }
+      end
+      assert.is_false(protected:accepts_automated_input())
+      process = "contract-agent"
+      assert.is_true(protected:accepts_automated_input())
     end,
     display = function()
       setup_config("tmux", { create = "split" })

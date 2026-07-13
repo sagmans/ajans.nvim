@@ -41,6 +41,13 @@ function M._run(cmd, opts)
   return vim.system(cmd, opts):wait(timeout)
 end
 
+---@param cmd string[]
+---@param opts vim.SystemOpts
+---@param callback fun(result:vim.SystemCompleted)
+function M._run_async(cmd, opts, callback)
+  vim.system(cmd, opts, callback)
+end
+
 ---@param commands string[][]
 ---@return vim.SystemCompleted[]
 function M._run_many(commands)
@@ -762,22 +769,22 @@ end
 
 function M:detach() end
 
----@return boolean
-function M:is_running()
-  local args
+---@param self ajans.cli.muxer.Herdr
+---@return string[]?
+local function liveness_args(self)
   if self.herdr_agent and self.herdr_terminal_id then
-    args = { "agent", "get", self.herdr_terminal_id }
+    return { "agent", "get", self.herdr_terminal_id }
   elseif self.herdr_pane_id then
-    args = { "pane", "get", self.herdr_pane_id }
-  else
-    return false
+    return { "pane", "get", self.herdr_pane_id }
   end
-  local result, err = M.request(args, {
-    notify = false,
-    stopped_ok = true,
-    system = { timeout = M.LIVENESS_TIMEOUT },
-  })
-  if result then
+end
+
+---@param self ajans.cli.muxer.Herdr
+---@param live boolean
+---@param err? string
+---@return boolean
+local function resolve_liveness(self, live, err)
+  if live then
     self._liveness_error = nil
     return true
   end
@@ -793,6 +800,40 @@ function M:is_running()
   end
   -- A transient transport failure is unknown, not proof that the pane exited.
   return true
+end
+
+---@return boolean
+function M:is_running()
+  local args = liveness_args(self)
+  if not args then
+    return false
+  end
+  local result, err = M.request(args, {
+    notify = false,
+    stopped_ok = true,
+    system = { timeout = M.LIVENESS_TIMEOUT },
+  })
+  return resolve_liveness(self, result ~= nil, err)
+end
+
+---@param callback fun(running:boolean)
+function M:is_running_async(callback)
+  local args = liveness_args(self)
+  if not args then
+    callback(false)
+    return
+  end
+  M._run_async(herdr_cmd(args), { text = true, timeout = M.LIVENESS_TIMEOUT }, function(result)
+    vim.schedule(function()
+      if result.code == 0 then
+        local value = decode(result.stdout)
+        callback(resolve_liveness(self, type(value) == "table" and type(value.result) == "table", "malformed JSON"))
+        return
+      end
+      local message = error_message(result)
+      callback(resolve_liveness(self, false, stopped_error(message) and "stopped" or message))
+    end)
+  end)
 end
 
 function M:accepts_automated_input()

@@ -6,7 +6,11 @@ M._request_id = 0
 ---@param cmd string[]
 ---@return boolean
 function M.is_sensitive(cmd)
-  return cmd[1] == "herdr" and cmd[2] == "agent" and (cmd[3] == "start" or cmd[3] == "send")
+  return cmd[1] == "herdr"
+    and (
+      (cmd[2] == "agent" and (cmd[3] == "start" or cmd[3] == "send"))
+      or (cmd[2] == "pane" and cmd[3] == "send-text")
+    )
 end
 
 ---@return table?, string?
@@ -92,7 +96,8 @@ function M.request(method, params)
   if not status then
     return { code = 1, signal = 0, stdout = "", stderr = status_error or "Unable to query Herdr server" }
   end
-  if status.running ~= true or type(status.socket_path) ~= "string" or status.socket_path == "" then
+  local socket = status.socket or status.socket_path
+  if status.running ~= true or type(socket) ~= "string" or socket == "" then
     return { code = 1, signal = 0, stdout = "", stderr = "Herdr server status is missing a running API socket" }
   end
 
@@ -102,7 +107,7 @@ function M.request(method, params)
     method = method,
     params = params,
   })
-  local exchanged, response, exchange_error = pcall(M._exchange, status.socket_path, payload, M.TIMEOUT)
+  local exchanged, response, exchange_error = pcall(M._exchange, socket, payload, M.TIMEOUT)
   if not exchanged then
     exchange_error = tostring(response)
     response = nil
@@ -174,11 +179,14 @@ end
 ---@param cmd string[]
 ---@return vim.SystemCompleted
 function M.run(cmd)
-  if cmd[3] == "start" then
+  if cmd[2] == "agent" and cmd[3] == "start" then
     return start(cmd)
   end
-  if cmd[3] == "send" and type(cmd[4]) == "string" and type(cmd[5]) == "string" then
+  if cmd[2] == "agent" and cmd[3] == "send" and type(cmd[4]) == "string" and type(cmd[5]) == "string" then
     return M.request("agent.send", { target = cmd[4], text = table.concat(cmd, " ", 5) })
+  end
+  if cmd[2] == "pane" and cmd[3] == "send-text" and type(cmd[4]) == "string" and type(cmd[5]) == "string" then
+    return M.request("pane.send_text", { pane_id = cmd[4], text = table.concat(cmd, " ", 5) })
   end
   return { code = 2, signal = 0, stdout = "", stderr = "unsupported sensitive Herdr command" }
 end

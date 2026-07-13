@@ -311,6 +311,7 @@ function M.attach(session)
   ---@type ajans.cli.terminal.Cmd?
   local cmd
   local started = session.started == true
+  local fresh = not started
   if started then
     cmd = session:attach()
   else
@@ -332,6 +333,7 @@ function M.attach(session)
       mux_session = session.mux_session,
       mux_identity = session.identity,
       external = session.external,
+      fresh = fresh,
       parent = session,
     })
     terminal:start()
@@ -347,6 +349,10 @@ function M.attach(session)
   return session
 end
 
+function M.attached_snapshot()
+  return M._attached
+end
+
 function M.attached()
   local ret = {} ---@type table<string,ajans.cli.Session>
   for id, session in pairs(M._attached) do
@@ -357,6 +363,39 @@ function M.attached()
     end
   end
   return ret
+end
+
+---@param callback fun(sessions:table<string,ajans.cli.Session>)
+function M.attached_async(callback)
+  local ret = {} ---@type table<string,ajans.cli.Session>
+  local entries = {}
+  for id, session in pairs(M._attached) do
+    entries[#entries + 1] = { id = id, session = session }
+  end
+  local pending = #entries
+  if pending == 0 then
+    callback(ret)
+    return
+  end
+  for _, entry in ipairs(entries) do
+    local id, session = entry.id, entry.session
+    local function complete(running)
+      if running then
+        ret[id] = session
+      else
+        M.detach(session)
+      end
+      pending = pending - 1
+      if pending == 0 then
+        callback(ret)
+      end
+    end
+    if session.is_running_async then
+      session:is_running_async(complete)
+    else
+      complete(session:is_running())
+    end
+  end
 end
 
 return M
