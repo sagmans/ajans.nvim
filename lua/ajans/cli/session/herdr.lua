@@ -23,6 +23,7 @@ M.LIVENESS_TIMEOUT = 250
 M.LIVENESS_ERROR_INTERVAL = 30000
 M.DISCOVERY_TIMEOUT = 5000
 M.PROCESS_INFO_CONCURRENCY = 8
+M.MAX_DUMP_LINES = 1000
 M.SEND_CHUNK_BYTES = 24 * 1024
 
 local AGENT_PREFIX = "ajans:"
@@ -897,7 +898,7 @@ function M:dump()
     "--source",
     "recent",
     "--lines",
-    tostring(Config.cli.mux.dump),
+    tostring(math.max(1, math.min(M.MAX_DUMP_LINES, math.floor(Config.cli.mux.dump)))),
     "--ansi",
   })
 end

@@ -267,6 +267,13 @@ local adapters = {
       assert.are.equal(2, #calls)
       assert.are.equal("load-buffer", calls[1][2])
       assert.are.equal("paste-buffer", calls[2][2])
+
+      calls = {}
+      local unresolved = tmux_session({ external = true })
+      unresolved.tmux_pane_id = nil
+      unresolved:send("repository context")
+      assert.are.same({}, calls)
+      assert.is_false(unresolved._last_send_ok)
     end,
     display = function()
       setup_config("tmux", { create = "split" })

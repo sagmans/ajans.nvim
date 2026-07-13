@@ -97,6 +97,36 @@ describe("status", function()
     }, sorted_cli_status())
   end)
 
+  it("preserves external metadata on attached terminal wrappers", function()
+    Session.attached = function()
+      return {
+        ["terminal: herdr:term-1"] = {
+          id = "terminal: herdr:term-1",
+          tool = { name = "claude" },
+          cwd = "/tmp/project",
+          backend = "terminal",
+          mux_backend = "herdr",
+          mux_identity = "herdr:term-1",
+          external = true,
+        },
+      }
+    end
+
+    Status.setup()
+
+    assert.are.same({
+      {
+        id = "terminal: herdr:term-1",
+        tool = "claude",
+        cwd = "/tmp/project",
+        backend = "herdr",
+        external = true,
+        terminal = true,
+        identity = "herdr:term-1",
+      },
+    }, Status.cli())
+  end)
+
   it("keeps partial CLI session data without failing", function()
     Session.attached = function()
       return {

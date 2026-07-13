@@ -63,7 +63,7 @@ Ajans resolves one active backend during session setup. Explicit `tmux` or `herd
 
 - New sessions get stable names from tool name plus cwd hash.
 - The tmux adapter discovers panes with `tmux list-panes` and inspects process trees with `ps`, `/proc`, and `lsof` where available.
-- The Herdr adapter takes an `api snapshot` on Herdr 0.7.2+ and composes the equivalent public list inventory on 0.7.0–0.7.1. Stable Ajans names and Herdr labels classify known tools first; bounded process inspection is reserved for unmatched custom tools. It keeps Herdr terminal, pane, tab, workspace, and available process identities.
+- The Herdr adapter takes an `api snapshot` on Herdr 0.7.2+ and composes the equivalent public list inventory on 0.7.0-0.7.1. Stable Ajans names and Herdr labels classify known tools first; bounded process inspection is reserved for unmatched custom tools. It keeps Herdr terminal, pane, tab, workspace, and available process identities.
 - Herdr control calls use bounded execution and decoded JSON errors. Sensitive launch and prompt payloads use Herdr's local newline-delimited JSON socket instead of process arguments. Workspace, tab, pane, and nested-layout changes use validated transactional cleanup.
 - If Neovim is hosted by the selected backend, `window` maps to a tmux window or Herdr tab and `split` maps to a native pane split.
 - Backend `start()` returns `(terminal_command, started)`: `started` is the authoritative creation outcome, while an optional command requests a Neovim terminal wrapper. Discovery returns `(sessions, authoritative)`, so transient scans retain known sessions and authoritative scans remove stale wrappers.

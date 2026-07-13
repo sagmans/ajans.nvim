@@ -1790,6 +1790,28 @@ describe("herdr backend", function()
     assert.are.equal("\27[31mred\27[0m\n", session:dump())
   end)
 
+  it("applies Herdr's scrollback limit without changing shared config", function()
+    setup_config({ cli = { mux = { backend = "herdr", dump = 5000 } } })
+    local session = new_session({ started = true, herdr_pane_id = "pane-1", herdr_terminal_id = "term-1" })
+    Herdr._run = function(cmd)
+      assert.are.same({
+        "herdr",
+        "pane",
+        "read",
+        "pane-1",
+        "--source",
+        "recent",
+        "--lines",
+        tostring(Herdr.MAX_DUMP_LINES),
+        "--ansi",
+      }, cmd)
+      return completed("history\n")
+    end
+
+    assert.are.equal("history\n", session:dump())
+    assert.are.equal(5000, Config.cli.mux.dump)
+  end)
+
   it("keeps persistent Herdr sessions alive on detach", function()
     local calls = 0
     local session = new_session({ started = true, herdr_pane_id = "pane-1", herdr_terminal_id = "term-1" })

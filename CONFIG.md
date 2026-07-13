@@ -182,8 +182,8 @@ Controls backend selection and session placement.
 - `create = "terminal"`: attach the persistent session inside a Neovim terminal
 - `create = "window"`: when hosted by the backend, create a tmux window or Herdr tab
 - `create = "split"`: when hosted by the backend, create a native split
-- `split.vertical` and `split.size`: external split direction and size; values at or below `1` are fractions clamped to the shared `0.1`–`0.9` range, and larger values are terminal cells that must resolve within the same layout range
-- `dump`: scrollback lines captured for Ajans scrollback, clamped to the shared backend limit of `1`–`1000`
+- `split.vertical` and `split.size`: external split direction and size; values at or below `1` are fractions, and larger values are terminal cells. Herdr validates that the result stays within its supported `0.1`-`0.9` layout range.
+- `dump`: requested scrollback lines. tmux keeps the configured value; Herdr clamps reads to its `1`-`1000` line limit.
 
 Herdr requires version `>= 0.7.0` on macOS or Linux. Herdr commands inherit `HERDR_SESSION` and `HERDR_SOCKET_PATH`, so named Herdr sessions work without extra Ajans configuration. Native Herdr tab/split creation also requires the `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID` values exported by Herdr; `create = "terminal"` does not.
 

@@ -191,6 +191,12 @@ function M:_drain_input()
   if not item then
     return
   end
+  local pane_id = self:pane_id()
+  if not pane_id then
+    self._last_send_ok = false
+    self._input_queue = {}
+    return
+  end
   self._sending = true
 
   local function complete(ok)
@@ -210,20 +216,20 @@ function M:_drain_input()
       return
     end
     self._last_send_ok = nil
-    complete(Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Enter" }) ~= nil)
+    complete(Util.exec({ "tmux", "send-keys", "-t", pane_id, "Enter" }) ~= nil)
     return
   end
 
   local function send_text()
-    local buffer = "ajans-" .. self.tmux_pane_id
+    local buffer = "ajans-" .. pane_id
     if Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = item.text }) == nil then
       complete(false)
       return
     end
-    complete(Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", self.tmux_pane_id }) ~= nil)
+    complete(Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", pane_id }) ~= nil)
   end
   if self.tool.mux_focus then
-    if Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Escape", "[", "I" }) == nil then
+    if Util.exec({ "tmux", "send-keys", "-t", pane_id, "Escape", "[", "I" }) == nil then
       complete(false)
       return
     end
