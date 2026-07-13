@@ -3,6 +3,11 @@ local Util = require("ajans.util")
 
 local M = {}
 
+---@class ajans.herdr.DiscoveryBackend
+---@field request fun(args:string[], opts?:table):table?, string?
+---@field supports_snapshot fun():boolean
+---@field _run_many fun(commands:string[][]):vim.SystemCompleted[]
+
 local AGENT_PREFIX = "ajans:"
 local LABEL_ALIASES = {
   ["github-copilot"] = "copilot",
@@ -72,7 +77,7 @@ function M.to_proc(process)
   }
 end
 
----@param backend table
+---@param backend ajans.herdr.DiscoveryBackend
 ---@param pane table
 ---@return table?
 function M.pane_process_info(backend, pane)
@@ -97,7 +102,7 @@ local function result_error(result)
   return tostring(output or "unknown error"):gsub("%s+$", "")
 end
 
----@param backend table
+---@param backend ajans.herdr.DiscoveryBackend
 ---@param panes table[]
 ---@return table<string,table>, boolean
 local function pane_process_infos(backend, panes)
@@ -164,7 +169,7 @@ local function match_pane(pane, agent, tools, tool_names, info)
   end
 end
 
----@param backend table
+---@param backend ajans.herdr.DiscoveryBackend
 ---@param resource "workspace"|"tab"|"pane"|"agent"
 ---@param field "workspaces"|"tabs"|"panes"|"agents"
 ---@return table[]?, string?
@@ -180,7 +185,7 @@ local function legacy_list(backend, resource, field)
   return result[field]
 end
 
----@param backend table
+---@param backend ajans.herdr.DiscoveryBackend
 ---@return table?, string?
 function M.snapshot(backend)
   if backend.supports_snapshot() then
@@ -217,7 +222,7 @@ function M.snapshot(backend)
   return snapshot
 end
 
----@param backend table
+---@param backend ajans.herdr.DiscoveryBackend
 ---@return ajans.cli.session.State[], boolean
 function M.sessions(backend)
   local snapshot, err = M.snapshot(backend)

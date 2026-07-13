@@ -89,8 +89,10 @@ function B:is_attached()
   return false
 end
 
---- List all active sessions for this backend
----@return ajans.cli.session.State[]
+--- List active sessions and whether absence is authoritative.
+--- Transient scans return false so known sessions remain attached.
+---@return ajans.cli.session.State[] sessions
+---@return boolean authoritative
 function B.sessions()
   error("Backend:sessions() not implemented")
 end
