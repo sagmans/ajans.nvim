@@ -52,6 +52,9 @@ Herdr._run_many = function(commands)
     return Herdr._run(cmd)
   end, commands)
 end
+Herdr._spawn = function()
+  error("tests must stub Herdr._spawn before starting a live Herdr process")
+end
 
 -- TODO: check why this is needed
 vim.opt.rtp:append(vim.fn.stdpath("data") .. "/site")

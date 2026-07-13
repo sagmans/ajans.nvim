@@ -68,6 +68,12 @@ function B:is_running()
   error("Backend:is_running() not implemented")
 end
 
+--- Confirm automated input still targets the expected tool.
+---@return boolean
+function B:accepts_automated_input()
+  return self:is_running()
+end
+
 function B:is_attached()
   if M._attached[self.id] ~= nil then
     return true

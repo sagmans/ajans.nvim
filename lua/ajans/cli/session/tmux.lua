@@ -1,4 +1,5 @@
 local Config = require("ajans.config")
+local Procs = require("ajans.cli.procs")
 local Util = require("ajans.util")
 
 ---@class ajans.cli.muxer.Tmux: ajans.cli.Session
@@ -74,6 +75,20 @@ function M:is_running()
   return self.tmux_pid and vim.api.nvim_get_proc(self.tmux_pid) ~= nil
 end
 
+function M:accepts_automated_input()
+  if not self.tmux_pid or type(self.tool.is_proc) ~= "function" then
+    return false
+  end
+  local found = false
+  Procs.new():walk(self.tmux_pid, function(proc)
+    if self.tool:is_proc(proc) then
+      found = true
+      return true
+    end
+  end)
+  return found
+end
+
 ---@param ret string[]
 function M:add_cmd(ret)
   for key, value in pairs(self.tool.env or {}) do
@@ -132,7 +147,6 @@ function M.sessions()
 
   local clients = M.clients()
 
-  local Procs = require("ajans.cli.procs")
   local procs = Procs.new()
   for _, pane in ipairs(panes) do
     procs:walk(pane.pid, function(proc)

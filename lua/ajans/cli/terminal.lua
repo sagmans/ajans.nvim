@@ -136,6 +136,13 @@ function M:is_running()
   return self.job and vim.fn.jobwait({ self.job }, 0)[1] == -1
 end
 
+function M:accepts_automated_input()
+  if self.parent and self.parent.accepts_automated_input then
+    return self.parent:accepts_automated_input()
+  end
+  return self:is_running()
+end
+
 function M:buf_valid()
   return self.buf and vim.api.nvim_buf_is_valid(self.buf)
 end

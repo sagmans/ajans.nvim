@@ -1,3 +1,4 @@
+local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
 local Util = require("ajans.util")
 
@@ -16,6 +17,8 @@ M.SNAPSHOT_VERSION = { 0, 7, 2 }
 M.STARTUP_TIMEOUT = 5000
 M.STARTUP_INTERVAL = 100
 M.COMMAND_TIMEOUT = 5000
+M.LIVENESS_TIMEOUT = 250
+M.LIVENESS_ERROR_INTERVAL = 30000
 M.DISCOVERY_TIMEOUT = 5000
 M.PROCESS_INFO_CONCURRENCY = 8
 M.SEND_CHUNK_BYTES = 24 * 1024
@@ -30,6 +33,9 @@ local LABEL_ALIASES = {
 ---@param opts? vim.SystemOpts
 ---@return vim.SystemCompleted
 function M._run(cmd, opts)
+  if Client.is_sensitive(cmd) then
+    return Client.run(cmd)
+  end
   opts = vim.tbl_extend("force", { text = true }, opts or {})
   local timeout = opts.timeout or M.COMMAND_TIMEOUT
   opts.timeout = nil
@@ -74,6 +80,9 @@ end
 ---@param opts? vim.SystemOpts
 ---@return vim.SystemObj
 function M._spawn(cmd, opts)
+  if vim.deep_equal(cmd, { "herdr", "server" }) then
+    return Client.spawn_server()
+  end
   return vim.system(cmd, opts)
 end
 
@@ -352,14 +361,14 @@ function M.ensure_server()
   if status.running then
     return true
   end
-  local ok = pcall(M._spawn, { "herdr", "server" }, {
+  local ok, spawned = pcall(M._spawn, { "herdr", "server" }, {
     text = true,
     detach = true,
     stdin = false,
     stdout = false,
     stderr = false,
   })
-  if not ok then
+  if not ok or not spawned then
     Util.error("Failed to start the Herdr server")
     return false
   end
@@ -1051,15 +1060,46 @@ function M:is_running()
   else
     return false
   end
-  local result, err = M.request(args, { notify = false, stopped_ok = true })
+  local result, err = M.request(args, {
+    notify = false,
+    stopped_ok = true,
+    system = { timeout = M.LIVENESS_TIMEOUT },
+  })
   if result then
+    self._liveness_error = nil
     return true
   end
   if err == "stopped" or (err and (err:find("not_found", 1, true) or err:find("not found", 1, true))) then
     return false
   end
-  Util.error("Unable to verify Herdr session liveness: " .. (err or "unknown error"))
+  local now = vim.uv.now()
+  local message = err or "unknown error"
+  local previous = self._liveness_error
+  if not previous or previous.message ~= message or now - previous.time >= M.LIVENESS_ERROR_INTERVAL then
+    Util.error("Unable to verify Herdr session liveness: " .. message)
+    self._liveness_error = { message = message, time = now }
+  end
+  -- A transient transport failure is unknown, not proof that the pane exited.
   return true
+end
+
+function M:accepts_automated_input()
+  if self.herdr_agent then
+    return self:is_running()
+  end
+  if not self.herdr_pane_id or type(self.tool.is_proc) ~= "function" then
+    return false
+  end
+  local info = pane_process_info({ pane_id = self.herdr_pane_id })
+  if not info then
+    return false
+  end
+  for _, process in ipairs(info.foreground_processes or {}) do
+    if self.tool:is_proc(to_proc(process)) then
+      return true
+    end
+  end
+  return false
 end
 
 ---@param text string
@@ -1087,6 +1127,9 @@ end
 
 ---@param text string
 function M:send(text)
+  if not self.herdr_pane_id or (self.herdr_agent and not self.herdr_terminal_id) then
+    return false
+  end
   self._send_queue = self._send_queue or {}
   self._send_queue[#self._send_queue + 1] = text
   if self._sending then
@@ -1118,6 +1161,9 @@ function M:send(text)
 end
 
 function M:submit()
+  if not self.herdr_pane_id then
+    return false
+  end
   if self._last_send_ok == false then
     self._last_send_ok = nil
     return false

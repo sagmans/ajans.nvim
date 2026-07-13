@@ -1426,6 +1426,42 @@ describe("herdr backend", function()
     assert.is_false(session._sending)
   end)
 
+  it("refuses input without the required stable pane identity", function()
+    local calls = 0
+    local session = new_session({ started = true, herdr_agent = true, herdr_terminal_id = "term-1" })
+    Herdr._run = function()
+      calls = calls + 1
+      return completed()
+    end
+
+    assert.is_false(session:send("prompt"))
+    assert.is_false(session:submit())
+    assert.are.equal(0, calls)
+  end)
+
+  it("validates a custom pane still runs the configured tool", function()
+    local process = "custom-agent"
+    local tool = test_tool({ name = "custom" })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "custom-agent"
+    end
+    local session = new_session({
+      started = true,
+      herdr_agent = false,
+      herdr_terminal_id = "term-custom",
+      herdr_pane_id = "pane-custom",
+      tool = tool,
+    })
+    Herdr._run = function(cmd)
+      assert.are.same({ "herdr", "pane", "process-info", "--pane", "pane-custom" }, cmd)
+      return success({ process_info = { foreground_processes = { { pid = 42, cmdline = process } } } })
+    end
+
+    assert.is_true(session:accepts_automated_input())
+    process = "zsh"
+    assert.is_false(session:accepts_automated_input())
+  end)
+
   it("does not submit Enter after a failed send", function()
     local calls = {}
     local session = new_session({
@@ -1533,7 +1569,8 @@ describe("herdr backend", function()
       herdr_terminal_id = "term-1",
       herdr_pane_id = "pane-1",
     })
-    Herdr._run = function()
+    Herdr._run = function(_, opts)
+      assert.are.equal(Herdr.LIVENESS_TIMEOUT, opts.timeout)
       return completed("", 1, "permission denied")
     end
     Util.error = function(message)
@@ -1541,6 +1578,8 @@ describe("herdr backend", function()
     end
 
     assert.is_true(session:is_running())
+    assert.is_true(session:is_running())
+    assert.are.equal(1, #errors)
     assert.matches("Unable to verify", errors[1])
   end)
 
