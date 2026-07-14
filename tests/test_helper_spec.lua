@@ -5,14 +5,14 @@ local it = Test.it
 
 describe("test helper", function()
   it("forwards BDD calls to the current collection globals", function()
-    local original = _G.describe
+    local original = rawget(_G, "describe")
     local forwarded
-    _G.describe = function(name)
+    rawset(_G, "describe", function(name)
       forwarded = name
-    end
+    end)
 
     Test.describe("current collection", function() end)
-    _G.describe = original
+    rawset(_G, "describe", original)
 
     assert.are.equal("current collection", forwarded)
   end)
