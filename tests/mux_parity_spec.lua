@@ -329,6 +329,28 @@ local adapters = {
       assert.is_false(protected:accepts_automated_input())
       current = "contract-agent"
       assert.is_true(protected:accepts_automated_input())
+
+      local deferred_send
+      local delivered = false
+      protected.tool.mux_focus = true
+      vim.defer_fn = function(callback)
+        deferred_send = callback
+        return 1
+      end
+      Util.exec = function(cmd)
+        if cmd[2] == "display-message" then
+          return { "101:" .. current }
+        end
+        if cmd[2] == "load-buffer" or cmd[2] == "paste-buffer" then
+          delivered = true
+        end
+        return {}
+      end
+      protected:send("secret")
+      current = "zsh"
+      deferred_send()
+      assert.is_false(delivered)
+      assert.is_false(protected._last_send_ok)
     end,
     display = function()
       setup_config("tmux", { create = "split" })

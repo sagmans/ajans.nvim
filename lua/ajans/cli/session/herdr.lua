@@ -786,6 +786,11 @@ function M:attach()
   if self.external or not self.herdr_terminal_id then
     return
   end
+  local _, transport_error = Client.trusted_socket()
+  if transport_error then
+    Util.error("Refusing to attach through an untrusted Herdr transport: " .. transport_error)
+    return
+  end
   if self.herdr_agent then
     return { cmd = { "herdr", "agent", "attach", self.herdr_terminal_id } }
   end
@@ -960,6 +965,10 @@ local function drain_input(self)
         ok = M.command({ "pane", "send-keys", self.herdr_pane_id, "escape", "[", "I" }) ~= nil
       end
       for _, chunk in ipairs(ok and send_chunks(operation.text) or {}) do
+        if self._authorized_pid and not self:accepts_automated_input() then
+          ok = false
+          break
+        end
         local result
         if self.herdr_agent then
           result = M.request({ "agent", "send", self.herdr_terminal_id, chunk }, { redact = true })

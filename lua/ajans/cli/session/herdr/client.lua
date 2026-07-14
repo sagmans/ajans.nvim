@@ -159,24 +159,33 @@ function M.validate_socket(path)
   return true
 end
 
+---@return string?, string?
+function M.trusted_socket()
+  local status, status_error = M._status()
+  if not status then
+    return nil, status_error or "Unable to query Herdr server"
+  end
+  local socket = status.socket or status.socket_path
+  if status.running ~= true or type(socket) ~= "string" or socket == "" then
+    return nil, "Herdr server status is missing a running API socket"
+  end
+  if status.compatible == false or status.restart_needed == true then
+    return nil, "Herdr server is not compatible with the active client"
+  end
+  local safe, socket_error = M.validate_socket(socket)
+  if not safe then
+    return nil, socket_error or "Herdr API socket is unsafe"
+  end
+  return socket
+end
+
 ---@param method string
 ---@param params table
 ---@return vim.SystemCompleted
 function M.request(method, params)
-  local status, status_error = M._status()
-  if not status then
-    return { code = 1, signal = 0, stdout = "", stderr = status_error or "Unable to query Herdr server" }
-  end
-  local socket = status.socket or status.socket_path
-  if status.running ~= true or type(socket) ~= "string" or socket == "" then
-    return { code = 1, signal = 0, stdout = "", stderr = "Herdr server status is missing a running API socket" }
-  end
-  if status.compatible == false or status.restart_needed == true then
-    return { code = 1, signal = 0, stdout = "", stderr = "Herdr server is not compatible with the active client" }
-  end
-  local safe, socket_error = M.validate_socket(socket)
-  if not safe then
-    return { code = 1, signal = 0, stdout = "", stderr = socket_error or "Herdr API socket is unsafe" }
+  local socket, socket_error = M.trusted_socket()
+  if not socket then
+    return { code = 1, signal = 0, stdout = "", stderr = socket_error }
   end
 
   M._request_id = M._request_id + 1

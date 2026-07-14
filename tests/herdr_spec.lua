@@ -85,6 +85,7 @@ describe("herdr backend", function()
   local original_has
   local original_system
   local original_client_run
+  local original_trusted_socket
   local original_hrtime
   local original_run
   local original_run_async
@@ -111,6 +112,10 @@ describe("herdr backend", function()
     original_has = vim.fn.has
     original_system = vim.system
     original_client_run = Client.run
+    original_trusted_socket = Client.trusted_socket
+    Client.trusted_socket = function()
+      return "/tmp/herdr-test.sock"
+    end
     original_hrtime = vim.uv.hrtime
     original_run = Herdr._run
     original_run_async = Herdr._run_async
@@ -154,6 +159,7 @@ describe("herdr backend", function()
     vim.fn.has = original_has
     vim.system = original_system
     Client.run = original_client_run
+    Client.trusted_socket = original_trusted_socket
     vim.uv.hrtime = original_hrtime
     Herdr._run = original_run
     Herdr._run_async = original_run_async
@@ -1681,6 +1687,21 @@ describe("herdr backend", function()
     end)
   end
 
+  it("refuses terminal attachment through an untrusted socket", function()
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+    })
+    Client.trusted_socket = function()
+      return nil, "unsafe socket"
+    end
+    Util.error = function() end
+
+    assert.is_nil(session:attach())
+  end)
+
   it("keeps external Herdr tabs and splits outside the Neovim terminal wrapper", function()
     for _, placement in ipairs({ "tab", "split" }) do
       local session = new_session({
@@ -1906,6 +1927,37 @@ describe("herdr backend", function()
     pid = 43
     assert.is_false(session:send("secret"))
     assert.are.equal(0, sends)
+  end)
+
+  it("stops a chunked send when the pinned process changes", function()
+    local tool = test_tool()
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "claude"
+    end
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+      tool = tool,
+    })
+    local pid = 42
+    local sends = 0
+    Herdr._run = function(cmd)
+      if cmd[2] == "agent" and cmd[3] == "get" then
+        return success({ agent = { terminal_id = "term-1", pane_id = "pane-1" } })
+      end
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = pid, cmdline = "claude" } } } })
+      end
+      sends = sends + 1
+      pid = 43
+      return success({})
+    end
+
+    assert.is_true(session:accepts_automated_input())
+    assert.is_false(session:send(string.rep("x", Herdr.SEND_CHUNK_BYTES + 1)))
+    assert.are.equal(1, sends)
   end)
 
   it("validates a custom pane still runs the configured tool", function()

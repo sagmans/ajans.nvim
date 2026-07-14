@@ -71,6 +71,43 @@ describe("terminal", function()
     assert.is_false(put_called)
   end)
 
+  it("revalidates a mux parent when queued input reaches delivery", function()
+    local Terminal = require("ajans.cli.terminal")
+    local authorization
+    local sent = false
+    vim.schedule = function(callback)
+      callback()
+    end
+    local terminal = setmetatable({
+      job = 42,
+      send_queue = { "secret" },
+      timer = {
+        start = function(_, _, _, callback)
+          callback()
+        end,
+      },
+      parent = {
+        send = function()
+          sent = true
+        end,
+        authorize_automated_input = function(_, callback)
+          authorization = callback
+        end,
+      },
+      is_running = function()
+        return true
+      end,
+      is_focused = function()
+        return false
+      end,
+    }, Terminal)
+
+    terminal:on_ready()
+    assert.is_false(sent)
+    authorization(false)
+    assert.is_false(sent)
+  end)
+
   it("authorizes a fresh tmux prompt only after resolving the target process", function()
     local Terminal = require("ajans.cli.terminal")
     local expected_process = true

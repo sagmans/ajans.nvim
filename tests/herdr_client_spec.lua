@@ -309,6 +309,25 @@ describe("Herdr client", function()
     assert.matches("mismatched response ID", result.stderr)
   end)
 
+  it("rejects an unsafe socket before writing secrets", function()
+    local exchanged = false
+    Client._status = function()
+      return { running = true, socket = "/tmp/herdr-test.sock" }
+    end
+    Client.validate_socket = function()
+      return false, "Herdr API socket is unsafe"
+    end
+    Client._exchange = function()
+      exchanged = true
+    end
+
+    local result = Client.run({ "herdr", "agent", "send", "term-1", "secret" })
+
+    assert.are.equal(1, result.code)
+    assert.matches("unsafe", result.stderr)
+    assert.is_false(exchanged)
+  end)
+
   it("rejects an incompatible server before writing secrets", function()
     local exchanged = false
     Client._status = function()

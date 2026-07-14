@@ -150,7 +150,11 @@ end
 function M:authorize_automated_input(callback)
   local parent = self.parent
   if not (self.fresh and parent and parent.backend == "tmux" and not parent.tmux_pid) then
-    callback(self:accepts_automated_input())
+    if parent and parent.authorize_automated_input then
+      parent:authorize_automated_input(callback)
+    else
+      callback(self:accepts_automated_input())
+    end
     return
   end
   local deadline = vim.uv.now() + TARGET_MAX_WAIT
@@ -391,18 +395,36 @@ function M:on_ready()
     return
   end
   self.timer:start(0, SEND_DELAY, function()
-    local next = table.remove(self.send_queue, 1) ---@type string?
-    if next then
-      next = next:gsub("\r\n", "\n") -- normalize line endings
-      vim.schedule(function()
-        if self:is_running() then
-          vim.api.nvim_chan_send(self.job, next)
-          if self:is_focused() then
-            vim.cmd.startinsert()
-          end
-        end
-      end)
+    if self._sending then
+      return
     end
+    local next = table.remove(self.send_queue, 1) ---@type string?
+    if not next then
+      return
+    end
+    self._sending = true
+    next = next:gsub("\r\n", "\n") -- normalize line endings
+    vim.schedule(function()
+      self:authorize_automated_input(function(accepted)
+        vim.schedule(function()
+          if accepted and self:is_running() then
+            if self.parent and self.parent.send then
+              if next == "\r" then
+                self.parent:submit()
+              else
+                self.parent:send(next)
+              end
+            else
+              vim.api.nvim_chan_send(self.job, next)
+            end
+            if self:is_focused() then
+              vim.cmd.startinsert()
+            end
+          end
+          self._sending = false
+        end)
+      end)
+    end)
   end)
 end
 

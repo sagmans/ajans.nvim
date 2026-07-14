@@ -409,7 +409,6 @@ function M.attached_async(callback)
     entries[#entries + 1] = { id = id, session = session }
   end
   local pending = #entries
-  local generation = M._attachment_generation
   if pending == 0 then
     callback(ret)
     return
@@ -417,7 +416,7 @@ function M.attached_async(callback)
   for _, entry in ipairs(entries) do
     local id, session = entry.id, entry.session
     local function complete(running)
-      if generation == M._attachment_generation and M._attached[id] == session then
+      if M._attached[id] == session then
         if running then
           ret[id] = session
         else

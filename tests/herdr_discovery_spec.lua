@@ -84,6 +84,26 @@ describe("Herdr discovery", function()
     assert.are.same({ 10 }, sessions[2].pids)
   end)
 
+  for _, missing in ipairs({ "workspaces", "tabs", "panes", "agents" }) do
+    it("rejects a snapshot missing " .. missing, function()
+      local snapshot = { workspaces = {}, tabs = {}, panes = {}, agents = {} }
+      snapshot[missing] = nil
+      local backend = {
+        supports_snapshot = function()
+          return true
+        end,
+        request = function()
+          return { snapshot = snapshot }
+        end,
+      }
+
+      local sessions, complete = Discovery.sessions(backend)
+
+      assert.are.same({}, sessions)
+      assert.is_false(complete)
+    end)
+  end
+
   it("normalizes labels and process metadata", function()
     assert.are.equal("copilot", Discovery.tool_name_for_label(" GitHub Copilot "))
     assert.are.same(

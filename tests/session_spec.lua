@@ -669,6 +669,35 @@ describe("session mux", function()
     assert.are.same({}, Session._attached)
   end)
 
+  it("keeps live asynchronous attachments regardless of completion order", function()
+    for _, order in ipairs({ { "dead", "live" }, { "live", "dead" } }) do
+      local callbacks = {}
+      local completed
+      local function entry(id)
+        return {
+          id = id,
+          is_running_async = function(_, callback)
+            callbacks[id] = callback
+          end,
+          detach = function() end,
+        }
+      end
+      local dead = entry("dead")
+      local live = entry("live")
+      Session._attached = { dead = dead, live = live }
+
+      Session.attached_async(function(sessions)
+        completed = sessions
+      end)
+      for _, id in ipairs(order) do
+        callbacks[id](id == "live")
+      end
+
+      assert.are.same({ live = live }, completed)
+      assert.are.same({ live = live }, Session._attached)
+    end
+  end)
+
   it("wraps tmux start commands in terminal sessions", function()
     local cwd = vim.uv.cwd()
     local started = 0

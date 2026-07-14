@@ -225,7 +225,7 @@ function M:_drain_input()
     return
   end
   local pane_id = self:pane_id()
-  if not pane_id then
+  if not pane_id or (self._authorized_pid and not self:accepts_automated_input()) then
     self._last_send_ok = false
     self._input_queue = {}
     return
@@ -254,6 +254,10 @@ function M:_drain_input()
   end
 
   local function send_text()
+    if self._authorized_pid and not self:accepts_automated_input() then
+      complete(false)
+      return
+    end
     local buffer = "ajans-" .. pane_id
     if Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = item.text }) == nil then
       complete(false)
