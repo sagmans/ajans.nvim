@@ -118,6 +118,10 @@ local function read_file(path)
   return value
 end
 
+M._fs_dir = vim.fs.dir
+M._read_file = read_file
+M._fs_readlink = vim.uv.fs_readlink
+
 ---@class ajans.cli.Proc
 ---@field pid number
 ---@field ppid number
@@ -170,9 +174,11 @@ local function add_proc(self, pid, ppid, args, metadata)
 end
 
 ---@param self ajans.cli.Procs
+---@param opts? {proc_root?:string}
 ---@return boolean
-local function update_from_proc(self)
-  local ok, entries = pcall(vim.fs.dir, "/proc")
+local function update_from_proc(self, opts)
+  local root = opts and opts.proc_root or "/proc"
+  local ok, entries = pcall(M._fs_dir, root)
   if not ok or not entries then
     return false
   end
@@ -180,15 +186,15 @@ local function update_from_proc(self)
   local complete = true
   for name, kind in entries do
     if kind == "directory" and name:match("^%d+$") then
-      local stat = read_file("/proc/" .. name .. "/stat")
+      local stat = M._read_file(root .. "/" .. name .. "/stat")
       local pid, ppid, pgid, tpgid, start_time
       if stat then
         pid, ppid, pgid, tpgid, start_time = M.parse_proc_stat(stat)
       end
       if pid and ppid then
-        local args = (read_file("/proc/" .. name .. "/cmdline") or ""):gsub("%z", " "):gsub("%s+$", "")
+        local args = (M._read_file(root .. "/" .. name .. "/cmdline") or ""):gsub("%z", " "):gsub("%s+$", "")
         if args == "" then
-          args = (read_file("/proc/" .. name .. "/comm") or ""):gsub("%s+$", "")
+          args = (M._read_file(root .. "/" .. name .. "/comm") or ""):gsub("%s+$", "")
         end
         if args == "" then
           complete = false
@@ -197,7 +203,7 @@ local function update_from_proc(self)
             pgid = pgid,
             tpgid = tpgid,
             start_time = start_time,
-            runtime_executable = vim.uv.fs_readlink("/proc/" .. name .. "/exe"),
+            runtime_executable = M._fs_readlink(root .. "/" .. name .. "/exe"),
           })
           found = true
         end
@@ -256,7 +262,7 @@ function M.from_ps_output(stdout)
   return self
 end
 
----@param opts? { force_proc?:boolean, timeout?:integer }
+---@param opts? { force_proc?:boolean, timeout?:integer, proc_root?:string }
 function P.new(opts)
   local self = setmetatable({}, P)
   self._procs = {}
@@ -265,7 +271,7 @@ function P.new(opts)
   return self
 end
 
----@param opts? { force_proc?:boolean, timeout?:integer }
+---@param opts? { force_proc?:boolean, timeout?:integer, proc_root?:string }
 function P:update(opts)
   self._procs = {}
   self._children = {}
@@ -281,8 +287,8 @@ function P:update(opts)
       self._children = {}
     end
   end
-  if have_proc then
-    self._complete = update_from_proc(self)
+  if have_proc or (opts and opts.proc_root) then
+    self._complete = update_from_proc(self, opts)
   end
 end
 

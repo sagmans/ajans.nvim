@@ -84,6 +84,95 @@ describe("Herdr discovery", function()
     assert.are.same({ 10 }, sessions[2].pids)
   end)
 
+  it("uses embedded process metadata without redundant pane commands", function()
+    local backend = {
+      supports_snapshot = function()
+        return true
+      end,
+      request = function()
+        return {
+          snapshot = {
+            workspaces = { { workspace_id = "w1" } },
+            tabs = { { tab_id = "t1", workspace_id = "w1" } },
+            panes = {
+              {
+                pane_id = "custom",
+                terminal_id = "term-custom",
+                workspace_id = "w1",
+                tab_id = "t1",
+                process_info = {
+                  foreground_processes = { { pid = 21, cmdline = "custom-agent", cwd = "/custom" } },
+                },
+              },
+            },
+            agents = {},
+          },
+        }
+      end,
+      _run_many = function(commands)
+        assert.are.same({}, commands)
+        return {}
+      end,
+    }
+
+    local sessions, complete = Discovery.sessions(backend)
+
+    assert.is_true(complete)
+    assert.are.equal(1, #sessions)
+    assert.are.equal("custom", sessions[1].tool.name)
+    assert.are.same({ 21 }, sessions[1].pids)
+  end)
+
+  for _, malformed in ipairs({
+    { field = "agents", value = { "invalid" } },
+    { field = "workspaces", value = { 1 } },
+    { field = "tabs", value = { false } },
+    {
+      field = "panes",
+      value = {
+        {
+          pane_id = "custom",
+          terminal_id = "term-custom",
+          workspace_id = "w1",
+          tab_id = "t1",
+          process_info = { foreground_processes = "invalid" },
+        },
+      },
+    },
+  }) do
+    it("marks malformed nested " .. malformed.field .. " inventory incomplete", function()
+      local snapshot = {
+        workspaces = { { workspace_id = "w1" } },
+        tabs = { { tab_id = "t1", workspace_id = "w1" } },
+        panes = {},
+        agents = {},
+      }
+      snapshot[malformed.field] = malformed.value
+      local backend = {
+        supports_snapshot = function()
+          return true
+        end,
+        request = function()
+          return { snapshot = snapshot }
+        end,
+        _run_many = function(commands)
+          return vim.tbl_map(function()
+            return success({ process_info = { foreground_processes = "invalid" } })
+          end, commands)
+        end,
+      }
+
+      local sessions
+      local complete
+      assert.has_no.errors(function()
+        sessions, complete = Discovery.sessions(backend)
+      end)
+
+      assert.is_table(sessions)
+      assert.is_false(complete)
+    end)
+  end
+
   for _, missing in ipairs({ "workspaces", "tabs", "panes", "agents" }) do
     it("rejects a snapshot missing " .. missing, function()
       local snapshot = { workspaces = {}, tabs = {}, panes = {}, agents = {} }

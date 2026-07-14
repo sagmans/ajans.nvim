@@ -54,7 +54,8 @@ function M.process_pids(process_info)
   end
   add_pid(pids, process_info.shell_pid)
   add_pid(pids, process_info.foreground_process_group_id)
-  for _, process in ipairs(process_info.foreground_processes or {}) do
+  local processes = type(process_info.foreground_processes) == "table" and process_info.foreground_processes or {}
+  for _, process in ipairs(processes) do
     add_pid(pids, process.pid)
   end
   return pids
@@ -195,7 +196,8 @@ local function match_pane(pane, agent, tools, tool_names, info, inventory)
       return tools[name]
     end
   end
-  for _, process in ipairs((info and info.foreground_processes) or {}) do
+  local processes = type(info) == "table" and info.foreground_processes or nil
+  for _, process in ipairs(type(processes) == "table" and processes or {}) do
     local proc = M.to_proc(process, inventory)
     for _, tool_name in ipairs(tool_names) do
       if tools[tool_name]:is_proc(proc) then
@@ -234,7 +236,7 @@ function M.snapshot(backend)
       return nil, "malformed snapshot"
     end
     for _, field in ipairs({ "workspaces", "tabs", "panes", "agents" }) do
-      if type(result.snapshot[field]) ~= "table" then
+      if type(result.snapshot[field]) ~= "table" or not vim.islist(result.snapshot[field]) then
         Util.error(("Herdr snapshot response is missing `%s`"):format(field))
         return nil, "malformed snapshot"
       end
@@ -269,7 +271,7 @@ function M.sessions(backend)
   local malformed_inventory = false
   local agents = {}
   for _, agent in ipairs(snapshot.agents) do
-    if agent.pane_id then
+    if type(agent) == "table" and type(agent.pane_id) == "string" then
       agents[agent.pane_id] = agent
     else
       malformed_inventory = true
@@ -277,7 +279,7 @@ function M.sessions(backend)
   end
   local workspaces = {}
   for _, workspace in ipairs(snapshot.workspaces) do
-    if workspace.workspace_id then
+    if type(workspace) == "table" and type(workspace.workspace_id) == "string" then
       workspaces[workspace.workspace_id] = workspace
     else
       malformed_inventory = true
@@ -285,7 +287,7 @@ function M.sessions(backend)
   end
   local tabs = {}
   for _, tab in ipairs(snapshot.tabs) do
-    if tab.tab_id then
+    if type(tab) == "table" and type(tab.tab_id) == "string" then
       tabs[tab.tab_id] = tab
     else
       malformed_inventory = true
@@ -295,7 +297,13 @@ function M.sessions(backend)
   local panes = {}
   local malformed_pane = false
   for _, pane in ipairs(snapshot.panes) do
-    if pane.pane_id and pane.terminal_id and pane.workspace_id and pane.tab_id then
+    if
+      type(pane) == "table"
+      and type(pane.pane_id) == "string"
+      and type(pane.terminal_id) == "string"
+      and type(pane.workspace_id) == "string"
+      and type(pane.tab_id) == "string"
+    then
       panes[#panes + 1] = pane
     else
       malformed_pane = true
@@ -315,13 +323,43 @@ function M.sessions(backend)
     end
     return inventory
   end
+  local function valid_process_info(info)
+    if info == nil then
+      return false, false
+    end
+    if type(info) ~= "table" then
+      return false, true
+    end
+    if info.foreground_processes == nil then
+      return true, false
+    end
+    if type(info.foreground_processes) ~= "table" then
+      return false, true
+    end
+    for _, process in ipairs(info.foreground_processes) do
+      if type(process) ~= "table" or tonumber(process.pid) == nil then
+        return false, true
+      end
+    end
+    return true, false
+  end
+
   local classified = {}
+  local embedded_process_infos = {}
   local unmatched = {}
+  local malformed_process_info = false
   for _, pane in ipairs(panes) do
-    local tool = match_pane(pane, agents[pane.pane_id], tools, tool_names)
+    local agent = agents[pane.pane_id]
+    local embedded = pane.process_info or (agent and agent.process_info)
+    local valid, malformed = valid_process_info(embedded)
+    malformed_process_info = malformed_process_info or malformed
+    if valid then
+      embedded_process_infos[pane.pane_id] = embedded
+    end
+    local tool = match_pane(pane, agent, tools, tool_names)
     if tool then
       classified[pane.pane_id] = tool
-    else
+    elseif not valid or type(embedded.foreground_processes) ~= "table" then
       unmatched[#unmatched + 1] = pane
     end
   end
@@ -329,7 +367,10 @@ function M.sessions(backend)
   local sessions = {}
   for _, pane in ipairs(panes) do
     local agent = agents[pane.pane_id]
-    local process_info = process_infos[pane.pane_id] or pane.process_info or (agent and agent.process_info)
+    local process_info = process_infos[pane.pane_id] or embedded_process_infos[pane.pane_id]
+    local process_valid, process_malformed = valid_process_info(process_info)
+    malformed_process_info = malformed_process_info or process_malformed
+    process_info = process_valid and process_info or nil
     local tool = classified[pane.pane_id]
     local proc
     if not tool then
@@ -375,7 +416,10 @@ function M.sessions(backend)
   if malformed_inventory then
     Util.error("Herdr snapshot contains a workspace, tab, or agent without a stable ID")
   end
-  return sessions, process_complete and not malformed_pane and not malformed_inventory
+  if malformed_process_info then
+    Util.error("Herdr snapshot contains malformed foreground process metadata")
+  end
+  return sessions, process_complete and not malformed_pane and not malformed_inventory and not malformed_process_info
 end
 
 return M

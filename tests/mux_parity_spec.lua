@@ -764,6 +764,41 @@ describe("multiplexer parity contract", function()
     end
   end)
 
+  it("marks tmux discovery incomplete when only process inventory is incomplete", function()
+    setup_config("tmux")
+    Tmux.panes = function()
+      return {
+        {
+          state_id = "tmux 101",
+          id = "%1",
+          pid = 101,
+          session_name = "contract abc123",
+          session_id = "$1",
+          cwd = "/tmp/contract",
+        },
+      },
+        true
+    end
+    Tmux.clients = function()
+      return { ["$1"] = {} }, true
+    end
+    Procs.new = function()
+      return {
+        walk = function(_, _, callback)
+          callback({ pid = 102, ppid = 101, cmd = "contract-agent", cwd = "/tmp/contract" })
+        end,
+        is_complete = function()
+          return false
+        end,
+      }
+    end
+
+    local sessions, authoritative = Tmux.sessions()
+
+    assert.are.equal(1, #sessions)
+    assert.is_false(authoritative)
+  end)
+
   it("authorizes tmux asynchronously under a fixed deadline", function()
     local callbacks = 0
     local accepted
