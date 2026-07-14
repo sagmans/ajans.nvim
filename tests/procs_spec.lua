@@ -116,6 +116,7 @@ describe("process inventory", function()
     local original = { pid = 42, start_time = "one", runtime_executable = "/usr/bin/pi" }
 
     assert.is_true(Procs.same_identity(original, vim.deepcopy(original)))
+    assert.is_true(Procs.same_identity(original, { pid = 42, start_time = "one", runtime_executable = "pi" }))
     assert.is_false(Procs.same_identity(original, { pid = 42, start_time = "two", runtime_executable = "/usr/bin/pi" }))
     assert.is_false(Procs.same_identity(original, { pid = 42, start_time = "one", runtime_executable = "/tmp/pi" }))
   end)

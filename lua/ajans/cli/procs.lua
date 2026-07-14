@@ -317,12 +317,19 @@ function M.same_identity(expected, actual)
   if expected.start_time and actual.start_time and expected.start_time ~= actual.start_time then
     return false
   end
-  if
-    expected.runtime_executable
-    and actual.runtime_executable
-    and vim.fs.normalize(expected.runtime_executable) ~= vim.fs.normalize(actual.runtime_executable)
-  then
-    return false
+  if expected.runtime_executable and actual.runtime_executable then
+    if vim.fs.basename(expected.runtime_executable) ~= vim.fs.basename(actual.runtime_executable) then
+      return false
+    end
+    local expected_path = expected.runtime_executable:find("/", 1, true)
+    local actual_path = actual.runtime_executable:find("/", 1, true)
+    if
+      expected_path
+      and actual_path
+      and vim.fs.normalize(expected.runtime_executable) ~= vim.fs.normalize(actual.runtime_executable)
+    then
+      return false
+    end
   end
   return true
 end
