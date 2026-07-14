@@ -23,7 +23,7 @@
 ---@field is_table fun(value:any, message?:string)
 ---@field is_true fun(value:any, message?:string)
 ---@field matches fun(pattern:string, actual:string, init?:integer, plain?:boolean)
----@operator call(any, string?): any
+---@overload fun(value:any, message?:string):any
 
 ---@class ajans.test.Adapter
 ---@field assert ajans.test.Assertions
