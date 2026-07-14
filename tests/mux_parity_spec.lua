@@ -806,7 +806,9 @@ describe("multiplexer parity contract", function()
     vim.schedule = function(callback)
       callback()
     end
+    local ps_commands = 0
     Procs.ps_command = function()
+      ps_commands = ps_commands + 1
       return { "ps", "inventory" }
     end
     Procs.from_ps_output = function()
@@ -835,6 +837,7 @@ describe("multiplexer parity contract", function()
 
     assert.is_true(accepted)
     assert.are.equal(1, callbacks)
+    assert.are.equal(1, ps_commands)
   end)
 
   it("rejects timed-out tmux authorization exactly once", function()

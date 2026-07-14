@@ -2062,23 +2062,73 @@ describe("herdr backend", function()
       herdr_pane_id = "pane-1",
       tool = tool,
     })
-    local pid = 42
+    local start_time = "start-1"
     local sends = 0
     Herdr._run = function(cmd)
       if cmd[2] == "agent" and cmd[3] == "get" then
         return success({ agent = { terminal_id = "term-1", pane_id = "pane-1" } })
       end
       if cmd[2] == "pane" and cmd[3] == "process-info" then
-        return success({ process_info = { foreground_processes = { { pid = pid, cmdline = "claude" } } } })
+        return success({
+          process_info = {
+            foreground_processes = {
+              { pid = 42, cmdline = "claude", name = "claude", start_time = start_time },
+            },
+          },
+        })
       end
       sends = sends + 1
       return completed()
     end
 
     assert.is_true(session:accepts_automated_input())
-    pid = 43
+    start_time = "start-2"
     assert.is_false(session:send("secret"))
     assert.are.equal(0, sends)
+  end)
+
+  it("refuses submit when a pinned PID is reused", function()
+    local tool = test_tool()
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "claude"
+    end
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+      tool = tool,
+    })
+    local start_time = "start-1"
+    local sends = 0
+    local enters = 0
+    Herdr._run = function(cmd)
+      if cmd[2] == "agent" and cmd[3] == "get" then
+        return success({ agent = { terminal_id = "term-1", pane_id = "pane-1" } })
+      end
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({
+          process_info = {
+            foreground_processes = {
+              { pid = 42, cmdline = "claude", name = "claude", start_time = start_time },
+            },
+          },
+        })
+      end
+      if cmd[2] == "pane" and cmd[3] == "send-keys" then
+        enters = enters + 1
+      else
+        sends = sends + 1
+      end
+      return success({})
+    end
+
+    assert.is_true(session:accepts_automated_input())
+    assert.is_true(session:send("safe"))
+    start_time = "start-2"
+    assert.is_false(session:submit())
+    assert.are.equal(1, sends)
+    assert.are.equal(0, enters)
   end)
 
   it("stops a chunked send when the pinned process changes", function()

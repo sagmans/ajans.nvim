@@ -162,7 +162,8 @@ function M:authorize_automated_input(callback)
   local finished = false
   local display_result
   local process_result
-  local pending = Procs.ps_command() and 2 or 1
+  local ps = Procs.ps_command()
+  local pending = ps and 2 or 1
   local function finish(value)
     if finished then
       return
@@ -194,7 +195,6 @@ function M:authorize_automated_input(callback)
   run(display_command(pane_id), function(result)
     display_result = result
   end)
-  local ps = Procs.ps_command()
   if ps then
     run(ps, function(result)
       process_result = result

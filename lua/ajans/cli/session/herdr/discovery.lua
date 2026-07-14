@@ -56,7 +56,9 @@ function M.process_pids(process_info)
   add_pid(pids, process_info.foreground_process_group_id)
   local processes = type(process_info.foreground_processes) == "table" and process_info.foreground_processes or {}
   for _, process in ipairs(processes) do
-    add_pid(pids, process.pid)
+    if type(process) == "table" then
+      add_pid(pids, process.pid)
+    end
   end
   return pids
 end
