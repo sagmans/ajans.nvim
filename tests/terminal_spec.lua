@@ -3,6 +3,7 @@
 describe("terminal", function()
   local original_schedule
   local original_now
+  local original_defer
   local original_chan_send
   local original_buf_call
   local original_put
@@ -11,6 +12,7 @@ describe("terminal", function()
   before_each(function()
     original_schedule = vim.schedule
     original_now = vim.uv.now
+    original_defer = vim.defer_fn
     original_chan_send = vim.api.nvim_chan_send
     original_buf_call = vim.api.nvim_buf_call
     original_put = vim.api.nvim_put
@@ -20,6 +22,7 @@ describe("terminal", function()
   after_each(function()
     vim.schedule = original_schedule
     vim.uv.now = original_now
+    vim.defer_fn = original_defer
     vim.api.nvim_chan_send = original_chan_send
     vim.api.nvim_buf_call = original_buf_call
     vim.api.nvim_put = original_put
@@ -71,11 +74,15 @@ describe("terminal", function()
   it("authorizes a fresh tmux prompt only after resolving the target process", function()
     local Terminal = require("ajans.cli.terminal")
     local expected_process = true
+    local pane_checks = 0
     local parent = {
       backend = "tmux",
       pane_id = function(self)
-        self.tmux_pid = 42
-        return "%1"
+        pane_checks = pane_checks + 1
+        if pane_checks > 1 then
+          self.tmux_pid = 42
+          return "%1"
+        end
       end,
       accepts_automated_input = function()
         return expected_process
@@ -92,13 +99,26 @@ describe("terminal", function()
     end
 
     local accepted
+    local deferred
+    vim.uv.now = function()
+      return 0
+    end
+    vim.defer_fn = function(callback)
+      deferred = callback
+      return 1
+    end
     fresh_terminal():authorize_automated_input(function(value)
       accepted = value
     end)
+    assert.is_nil(accepted)
+    assert.are.equal(1, pane_checks)
+    deferred()
     assert.is_true(accepted)
+    assert.are.equal(2, pane_checks)
 
     parent.tmux_pid = nil
     expected_process = false
+    vim.defer_fn = original_defer
     local ticks = 0
     vim.uv.now = function()
       ticks = ticks + 1

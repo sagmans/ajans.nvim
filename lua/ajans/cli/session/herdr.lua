@@ -404,9 +404,10 @@ local process_pids = Discovery.process_pids
 local to_proc = Discovery.to_proc
 
 ---@param pane table
+---@param opts? table
 ---@return table?
-local function pane_process_info(pane)
-  return Discovery.pane_process_info(M, pane)
+local function pane_process_info(pane, opts)
+  return Discovery.pane_process_info(M, pane, opts)
 end
 
 ---@return boolean
@@ -443,16 +444,37 @@ end
 function M:launch_argv()
   local argv = vim.deepcopy(self.tool.cmd)
   local env_args = {}
-  local unset = {}
-  local keys = vim.tbl_keys(self.tool.env or {})
-  table.sort(keys)
-  for _, key in ipairs(keys) do
-    local value = self.tool.env[key]
+  local unset = { "NVIM", "NVIM_LISTEN_ADDRESS", "TMUX", "TMUX_PANE" }
+  local env = vim.fn.environ()
+  -- Herdr assigns fresh pane identity after applying this map. Do not carry
+  -- host-multiplexer or Neovim endpoint identities into the child process.
+  for _, key in ipairs({
+    "HERDR_ENV",
+    "HERDR_PANE_ID",
+    "HERDR_TAB_ID",
+    "HERDR_WORKSPACE_ID",
+    "NVIM",
+    "NVIM_LISTEN_ADDRESS",
+    "TMUX",
+    "TMUX_PANE",
+  }) do
+    env[key] = nil
+  end
+  for key, value in pairs(self.tool.env or {}) do
     if value == false then
-      unset[#unset + 1] = key
+      env[key] = nil
+      if not vim.tbl_contains(unset, key) then
+        unset[#unset + 1] = key
+      end
     else
-      vim.list_extend(env_args, { "--env", ("%s=%s"):format(key, tostring(value)) })
+      env[key] = tostring(value)
     end
+  end
+  local keys = vim.tbl_keys(env)
+  table.sort(keys)
+  table.sort(unset)
+  for _, key in ipairs(keys) do
+    vim.list_extend(env_args, { "--env", ("%s=%s"):format(key, env[key]) })
   end
   if #unset > 0 then
     local wrapped = { "env" }
@@ -522,7 +544,9 @@ function M:set_agent(agent, placement)
   self.herdr_workspace_id = agent.workspace_id
   self.herdr_tab_id = agent.tab_id
   self.herdr_agent = true
-  self.herdr_name = self:agent_name()
+  self.herdr_name = agent.name or self:agent_name()
+  self.herdr_label = agent.agent or agent.display_agent
+  self.herdr_agent_session = agent.agent_session
   self.herdr_placement = placement
   self.mux_session = agent.workspace_id
   self.cwd = agent.foreground_cwd or agent.cwd or self.cwd
@@ -840,23 +864,53 @@ function M:is_running_async(callback)
   end
 end
 
-function M:accepts_automated_input()
-  if self.herdr_agent then
-    return self:is_running()
-  end
+---@param self ajans.cli.muxer.Herdr
+---@return boolean
+local function pane_runs_expected_tool(self)
   if not self.herdr_pane_id or type(self.tool.is_proc) ~= "function" then
     return false
   end
-  local info = pane_process_info({ pane_id = self.herdr_pane_id })
+  local info = pane_process_info({ pane_id = self.herdr_pane_id }, { system = { timeout = M.LIVENESS_TIMEOUT } })
   if not info then
     return false
   end
+  local matched_pid
   for _, process in ipairs(info.foreground_processes or {}) do
-    if self.tool:is_proc(to_proc(process)) then
-      return true
+    local pid = tonumber(process.pid)
+    if pid and self.tool:is_proc(to_proc(process)) then
+      if self._authorized_pid == pid then
+        return true
+      end
+      matched_pid = matched_pid or pid
     end
   end
-  return false
+  if self._authorized_pid then
+    return false
+  end
+  self._authorized_pid = matched_pid
+  return matched_pid ~= nil
+end
+
+function M:accepts_automated_input()
+  if self.herdr_agent then
+    local result = M.request({ "agent", "get", self.herdr_terminal_id }, {
+      notify = false,
+      stopped_ok = true,
+      system = { timeout = M.LIVENESS_TIMEOUT },
+    })
+    local agent = result and result.agent
+    if
+      type(agent) ~= "table"
+      or agent.terminal_id ~= self.herdr_terminal_id
+      or agent.pane_id ~= self.herdr_pane_id
+      or (self.herdr_name and agent.name ~= self.herdr_name)
+      or (self.herdr_label and (agent.agent or agent.display_agent) ~= self.herdr_label)
+      or (self.herdr_agent_session and not vim.deep_equal(agent.agent_session, self.herdr_agent_session))
+    then
+      return false
+    end
+  end
+  return pane_runs_expected_tool(self)
 end
 
 ---@param text string
@@ -882,51 +936,69 @@ local function send_chunks(text)
   return chunks
 end
 
+---@param self ajans.cli.muxer.Herdr
+local function drain_input(self)
+  if self._sending then
+    return
+  end
+  self._sending = true
+  while #self._input_queue > 0 do
+    local operation = table.remove(self._input_queue, 1)
+    if operation.kind == "submit" then
+      if self._last_send_ok == false then
+        operation.ok = false
+      else
+        operation.ok = M.command({ "pane", "send-keys", self.herdr_pane_id, "enter" }) ~= nil
+      end
+      self._last_send_ok = nil
+    else
+      local ok = true
+      if self.tool.mux_focus then
+        ok = M.command({ "pane", "send-keys", self.herdr_pane_id, "escape", "[", "I" }) ~= nil
+      end
+      for _, chunk in ipairs(ok and send_chunks(operation.text) or {}) do
+        local result
+        if self.herdr_agent then
+          result = M.request({ "agent", "send", self.herdr_terminal_id, chunk }, { redact = true })
+        else
+          result = M.command({ "pane", "send-text", self.herdr_pane_id, chunk }, { redact = true })
+        end
+        if not result then
+          ok = false
+          break
+        end
+      end
+      operation.ok = ok
+      self._last_send_ok = ok
+      if not ok then
+        self._input_queue = {}
+      end
+    end
+  end
+  self._sending = false
+end
+
 ---@param text string
 function M:send(text)
   if not self.herdr_pane_id or (self.herdr_agent and not self.herdr_terminal_id) then
     return false
   end
-  self._send_queue = self._send_queue or {}
-  self._send_queue[#self._send_queue + 1] = text
-  if self._sending then
-    return
-  end
-  self._sending = true
-  self._last_send_ok = true
-  while #self._send_queue > 0 do
-    local next = table.remove(self._send_queue, 1)
-    if self.tool.mux_focus then
-      M.command({ "pane", "send-keys", self.herdr_pane_id, "escape", "[", "I" })
-    end
-    for _, chunk in ipairs(send_chunks(next)) do
-      local result
-      if self.herdr_agent then
-        result = M.request({ "agent", "send", self.herdr_terminal_id, chunk }, { redact = true })
-      else
-        result = M.command({ "pane", "send-text", self.herdr_pane_id, chunk }, { redact = true })
-      end
-      if not result then
-        self._last_send_ok = false
-        self._send_queue = {}
-        break
-      end
-    end
-  end
-  self._sending = false
-  return self._last_send_ok
+  self._input_queue = self._input_queue or {}
+  local operation = { kind = "send", text = text }
+  self._input_queue[#self._input_queue + 1] = operation
+  drain_input(self)
+  return operation.ok
 end
 
 function M:submit()
   if not self.herdr_pane_id then
     return false
   end
-  if self._last_send_ok == false then
-    self._last_send_ok = nil
-    return false
-  end
-  self._last_send_ok = nil
-  return M.command({ "pane", "send-keys", self.herdr_pane_id, "enter" }) ~= nil
+  self._input_queue = self._input_queue or {}
+  local operation = { kind = "submit" }
+  self._input_queue[#self._input_queue + 1] = operation
+  drain_input(self)
+  return operation.ok
 end
 
 ---@return string?

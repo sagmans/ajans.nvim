@@ -39,6 +39,9 @@ local function direct_tool(opts)
     cmd = opts.cmd or { "contract-agent", "--flag" },
     env = opts.env or {},
     mux_focus = opts.mux_focus,
+    is_proc = function(_, proc)
+      return proc.cmd == "contract-agent"
+    end,
   }
 end
 
@@ -356,13 +359,9 @@ local adapters = {
       Util.exec = function()
         return nil
       end
-      Tmux.panes = function()
-        return {}
-      end
-      Tmux.clients = function()
-        return {}
-      end
-      assert.are.same({}, Tmux.sessions())
+      local sessions, authoritative = Tmux.sessions()
+      assert.are.same({}, sessions)
+      assert.is_false(authoritative)
     end,
   },
   herdr = {

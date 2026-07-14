@@ -1,7 +1,34 @@
+local bit = require("bit")
+
 local M = {}
 
 M.TIMEOUT = 5000
+M.MAX_RESPONSE_BYTES = 1024 * 1024
 M._request_id = 0
+M._fs_stat = vim.uv.fs_stat
+M._getuid = vim.uv.getuid
+
+local SERVER_ENV_KEYS = {
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "XDG_STATE_HOME",
+  "HERDR_CONFIG_PATH",
+  "HERDR_SESSION",
+  "HERDR_SOCKET_PATH",
+}
 
 ---@param cmd string[]
 ---@return boolean
@@ -56,6 +83,12 @@ function M._exchange(path, payload, timeout)
         done = true
         close()
       elseif chunk then
+        if #output + #chunk > M.MAX_RESPONSE_BYTES then
+          failure = "Herdr API response exceeded the size limit"
+          done = true
+          close()
+          return
+        end
         output = output .. chunk
         if output:find("\n", 1, true) then
           done = true
@@ -88,6 +121,34 @@ function M._exchange(path, payload, timeout)
   return line ~= "" and line or nil, line and nil or "Herdr API returned an empty response"
 end
 
+---@param path string
+---@return boolean, string?
+function M.validate_socket(path)
+  local stat = M._fs_stat(path)
+  if type(stat) ~= "table" or stat.type ~= "socket" then
+    return false, "Herdr API path is not a local socket"
+  end
+  local uid = M._getuid and M._getuid()
+  if uid and stat.uid ~= uid then
+    return false, "Herdr API socket is owned by another user"
+  end
+  if type(stat.mode) ~= "number" or bit.band(stat.mode, 0x3f) ~= 0 then
+    return false, "Herdr API socket permits group or other access"
+  end
+  for parent in vim.fs.parents(path) do
+    local parent_stat = M._fs_stat(parent)
+    if type(parent_stat) ~= "table" or parent_stat.type ~= "directory" or type(parent_stat.mode) ~= "number" then
+      return false, "Herdr API socket parent is not a trusted directory"
+    end
+    local writable = bit.band(parent_stat.mode, 0x12) ~= 0
+    local sticky = bit.band(parent_stat.mode, 0x200) ~= 0
+    if writable and not sticky then
+      return false, "Herdr API socket parent permits replacement by another user"
+    end
+  end
+  return true
+end
+
 ---@param method string
 ---@param params table
 ---@return vim.SystemCompleted
@@ -100,10 +161,18 @@ function M.request(method, params)
   if status.running ~= true or type(socket) ~= "string" or socket == "" then
     return { code = 1, signal = 0, stdout = "", stderr = "Herdr server status is missing a running API socket" }
   end
+  if status.compatible == false or status.restart_needed == true then
+    return { code = 1, signal = 0, stdout = "", stderr = "Herdr server is not compatible with the active client" }
+  end
+  local safe, socket_error = M.validate_socket(socket)
+  if not safe then
+    return { code = 1, signal = 0, stdout = "", stderr = socket_error or "Herdr API socket is unsafe" }
+  end
 
   M._request_id = M._request_id + 1
+  local request_id = "ajans:" .. M._request_id
   local payload = vim.json.encode({
-    id = "ajans:" .. M._request_id,
+    id = request_id,
     method = method,
     params = params,
   })
@@ -118,6 +187,9 @@ function M.request(method, params)
   local ok, decoded = pcall(vim.json.decode, response)
   if not ok or type(decoded) ~= "table" then
     return { code = 1, signal = 0, stdout = "", stderr = "Herdr API returned malformed JSON" }
+  end
+  if decoded.id ~= request_id then
+    return { code = 1, signal = 0, stdout = "", stderr = "Herdr API returned a mismatched response ID" }
   end
   local code = type(decoded.error) == "table" and 1 or 0
   return {
@@ -191,6 +263,19 @@ function M.run(cmd)
   return { code = 2, signal = 0, stdout = "", stderr = "unsupported sensitive Herdr command" }
 end
 
+---@return string[]
+function M.server_env()
+  local current = vim.fn.environ()
+  local env = {}
+  for _, key in ipairs(SERVER_ENV_KEYS) do
+    local value = current[key]
+    if type(value) == "string" then
+      env[#env + 1] = key .. "=" .. value
+    end
+  end
+  return env
+end
+
 ---@return boolean, string?
 function M.spawn_server()
   local handle
@@ -198,6 +283,7 @@ function M.spawn_server()
   handle, spawn_error = vim.uv.spawn("herdr", {
     args = { "server" },
     detached = true,
+    env = M.server_env(),
     stdio = { nil, nil, nil },
   }, function()
     if handle and not handle:is_closing() then

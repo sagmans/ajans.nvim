@@ -79,9 +79,11 @@ end
 
 ---@param backend ajans.herdr.DiscoveryBackend
 ---@param pane table
+---@param opts? table
 ---@return table?
-function M.pane_process_info(backend, pane)
-  local result, err = backend.request({ "pane", "process-info", "--pane", pane.pane_id }, { notify = false })
+function M.pane_process_info(backend, pane, opts)
+  opts = vim.tbl_extend("force", { notify = false }, opts or {})
+  local result, err = backend.request({ "pane", "process-info", "--pane", pane.pane_id }, opts)
   if type(result) ~= "table" then
     if err and not err:find("pane_not_found", 1, true) and not err:find("not found", 1, true) then
       Util.error(("Failed to inspect Herdr pane `%s`: %s"):format(pane.pane_id, err))
@@ -317,6 +319,8 @@ function M.sessions(backend)
         herdr_tab_id = pane.tab_id,
         herdr_agent = agent ~= nil,
         herdr_name = name,
+        herdr_label = agent and (agent.agent or agent.display_agent),
+        herdr_agent_session = agent and agent.agent_session,
         herdr_placement = placement,
       }
     end

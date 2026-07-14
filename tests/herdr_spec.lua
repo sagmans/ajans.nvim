@@ -104,6 +104,7 @@ describe("herdr backend", function()
   local original_workspace_id
   local original_tab_id
   local original_pane_id
+  local original_environ
 
   before_each(function()
     original_executable = vim.fn.executable
@@ -137,6 +138,7 @@ describe("herdr backend", function()
     original_workspace_id = vim.env.HERDR_WORKSPACE_ID
     original_tab_id = vim.env.HERDR_TAB_ID
     original_pane_id = vim.env.HERDR_PANE_ID
+    original_environ = vim.fn.environ
     vim.fn.has = function()
       return 0
     end
@@ -171,6 +173,7 @@ describe("herdr backend", function()
     vim.env.HERDR_WORKSPACE_ID = original_workspace_id
     vim.env.HERDR_TAB_ID = original_tab_id
     vim.env.HERDR_PANE_ID = original_pane_id
+    vim.fn.environ = original_environ
     pcall(vim.api.nvim_del_user_command, "Ajans")
   end)
 
@@ -947,6 +950,14 @@ describe("herdr backend", function()
     local calls = {}
     local tool = test_tool({ env = { ZED = "last", ALPHA = "first", REMOVE_ME = false } })
     local session = new_session({ tool = tool })
+    vim.fn.environ = function()
+      return {
+        ALPHA = "inherited",
+        HERDR_PANE_ID = "host-pane",
+        PARENT_SECRET = "per-agent-only",
+        REMOVE_ME = "old",
+      }
+    end
     Herdr.ensure_server = function()
       return true
     end
@@ -998,8 +1009,14 @@ describe("herdr backend", function()
     assert_pair(start, "--workspace", "w1")
     assert_pair(start, "--tab", "t1")
     assert_pair(start, "--env", "ALPHA=first")
+    assert_pair(start, "--env", "PARENT_SECRET=per-agent-only")
     assert_pair(start, "--env", "ZED=last")
-    assert.are.same({ "env", "-u", "REMOVE_ME", "--", "claude", "--flag" }, vim.list_slice(start, #start - 5))
+    assert.is_false(vim.tbl_contains(start, "HERDR_PANE_ID=host-pane"))
+    assert.is_false(vim.tbl_contains(start, "REMOVE_ME=old"))
+    for _, key in ipairs({ "NVIM", "NVIM_LISTEN_ADDRESS", "REMOVE_ME", "TMUX", "TMUX_PANE" }) do
+      assert_pair(start, "-u", key)
+    end
+    assert.are.same({ "claude", "--flag" }, vim.list_slice(start, #start - 1))
     local close = assert(find_call(calls, { "herdr", "pane", "close" })).cmd
     assert.are.equal("root", close[4])
   end)
@@ -1703,6 +1720,36 @@ describe("herdr backend", function()
     assert.are.same({ "herdr", "pane", "send-keys", "pane-1", "enter" }, calls[5])
   end)
 
+  it("keeps reentrant text and submission operations ordered", function()
+    local calls = {}
+    local nested = false
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+    })
+    Herdr._run = function(cmd)
+      if cmd[2] == "agent" and cmd[3] == "send" then
+        calls[#calls + 1] = "begin:" .. cmd[5]
+        if not nested then
+          nested = true
+          session:send("second")
+          session:submit()
+        end
+        calls[#calls + 1] = "end:" .. cmd[5]
+        return success({ type = "ok" })
+      end
+      calls[#calls + 1] = "key:" .. cmd[#cmd]
+      return completed()
+    end
+
+    assert.is_true(session:send("first"))
+
+    assert.are.same({ "begin:first", "end:first", "begin:second", "end:second", "key:enter" }, calls)
+    assert.is_false(session._sending)
+  end)
+
   it("sends literal text to an unclassified custom pane and does not wedge after failure", function()
     local calls = {}
     local failed = true
@@ -1743,6 +1790,91 @@ describe("herdr backend", function()
     assert.is_false(session:send("prompt"))
     assert.is_false(session:submit())
     assert.are.equal(0, calls)
+  end)
+
+  for _, case in ipairs({
+    { name = "transport error", response = completed("", 124, "timed out"), expected = false },
+    { name = "malformed response", response = completed("not-json"), expected = false },
+    {
+      name = "mismatched identity",
+      response = success({ agent = { terminal_id = "other", pane_id = "pane-1" } }),
+      expected = false,
+    },
+    {
+      name = "matching identity",
+      response = success({ agent = { terminal_id = "term-1", pane_id = "pane-1" } }),
+      expected = true,
+    },
+  }) do
+    it("authorizes agent input only after a " .. case.name, function()
+      local tool = test_tool()
+      tool.is_proc = function(_, proc)
+        return proc.cmd == "claude"
+      end
+      local session = new_session({
+        started = true,
+        herdr_agent = true,
+        herdr_terminal_id = "term-1",
+        herdr_pane_id = "pane-1",
+        tool = tool,
+      })
+      Herdr._run = function(cmd)
+        if cmd[2] == "pane" then
+          return success({ process_info = { foreground_processes = { { pid = 42, cmdline = "claude" } } } })
+        end
+        assert.are.same({ "herdr", "agent", "get", "term-1" }, cmd)
+        return case.response
+      end
+
+      assert.are.equal(case.expected, session:accepts_automated_input())
+    end)
+  end
+
+  it("refuses a replaced agent or foreground process", function()
+    local tool = test_tool()
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "claude"
+    end
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+      tool = tool,
+    })
+    session.herdr_name = "ajans:claude expected"
+    session.herdr_label = "claude"
+    session.herdr_agent_session = { source = "claude", value = "session-1" }
+    local name = "other"
+    local pids = { 42 }
+    Herdr._run = function(cmd)
+      if cmd[2] == "agent" then
+        return success({
+          agent = {
+            terminal_id = "term-1",
+            pane_id = "pane-1",
+            name = name,
+            agent = "claude",
+            agent_session = { source = "claude", value = "session-1" },
+          },
+        })
+      end
+      return success({
+        process_info = {
+          foreground_processes = vim.tbl_map(function(pid)
+            return { pid = pid, cmdline = "claude" }
+          end, pids),
+        },
+      })
+    end
+
+    assert.is_false(session:accepts_automated_input())
+    name = session.herdr_name
+    assert.is_true(session:accepts_automated_input())
+    pids = { 43, 42 }
+    assert.is_true(session:accepts_automated_input())
+    pids = { 43 }
+    assert.is_false(session:accepts_automated_input())
   end)
 
   it("validates a custom pane still runs the configured tool", function()
@@ -1858,6 +1990,33 @@ describe("herdr backend", function()
     assert.is_true(running)
   end)
 
+  for _, case in ipairs({
+    { name = "missing agent", response = failure("agent_not_found", "gone") },
+    { name = "stopped server", response = completed("", 1, "failed to connect to Herdr server: Connection refused") },
+  }) do
+    it("reports asynchronous liveness false for a " .. case.name, function()
+      local session = new_session({
+        started = true,
+        herdr_agent = true,
+        herdr_terminal_id = "term-1",
+        herdr_pane_id = "pane-1",
+      })
+      local running
+      Herdr._run_async = function(_, _, callback)
+        callback(case.response)
+      end
+
+      session:is_running_async(function(value)
+        running = value
+      end)
+
+      vim.wait(100, function()
+        return running ~= nil
+      end)
+      assert.is_false(running)
+    end)
+  end
+
   it("completes asynchronous liveness when process spawning fails", function()
     local session = new_session({
       started = true,
@@ -1967,6 +2126,18 @@ describe("herdr backend", function()
 
     assert.are.equal("history\n", session:dump())
     assert.are.equal(5000, Config.cli.mux.dump)
+  end)
+
+  it("applies Herdr's minimum scrollback without changing shared config", function()
+    setup_config({ cli = { mux = { backend = "herdr", dump = 0 } } })
+    local session = new_session({ started = true, herdr_pane_id = "pane-1", herdr_terminal_id = "term-1" })
+    Herdr._run = function(cmd)
+      assert_pair(cmd, "--lines", "1")
+      return completed("history\n")
+    end
+
+    assert.are.equal("history\n", session:dump())
+    assert.are.equal(0, Config.cli.mux.dump)
   end)
 
   it("keeps persistent Herdr sessions alive on detach", function()

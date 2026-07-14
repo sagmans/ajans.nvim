@@ -102,12 +102,14 @@ function M:add_cmd(ret)
 end
 
 ---@param opts? { cmd?:string[], notify?:boolean }
+---@return ajans.tmux.Pane[], boolean
 function M.panes(opts)
   opts = opts or {}
   -- List all panes in current session with their command and cwd
   local cmd = opts.cmd or { "tmux", "list-panes", "-a", "-F", PANE_FORMAT }
   local lines = Util.exec(cmd, { notify = opts.notify == true })
   local panes = {} ---@type ajans.tmux.Pane[]
+  local complete = lines ~= nil
   for _, line in ipairs(lines or {}) do
     local session_id, id, pid, session_name, cwd = line:match("^(%$%d+):(%%%d+):(%d+):(.-):(.*)$")
     if id and pid and session_name and cwd then
@@ -121,31 +123,37 @@ function M.panes(opts)
         session_id = session_id,
         cwd = cwd,
       }
+    else
+      complete = false
     end
   end
-  return panes
+  return panes, complete
 end
 
+---@return table<string,integer[]>, boolean
 function M.clients()
   local lines = Util.exec({ "tmux", "list-clients", "-F", "#{session_id}:#{client_pid}" }, { notify = false })
-  local ret = {} ---@type table<string, integer>[]
+  local ret = {} ---@type table<string,integer[]>
+  local complete = lines ~= nil
   for _, line in ipairs(lines or {}) do
     local session_id, pid = line:match("^(%$%d+):(%d+)$")
     if session_id and pid then
       pid = assert(tonumber(pid), "invalid tmux client_pid: " .. pid) --[[@as number]]
       ret[session_id] = ret[session_id] or {}
       table.insert(ret[session_id], pid)
+    else
+      complete = false
     end
   end
-  return ret
+  return ret, complete
 end
 
 function M.sessions()
-  local panes = M.panes()
+  local panes, panes_complete = M.panes()
   local ret = {} ---@type ajans.cli.session.State[]
   local tools = Config.tools()
 
-  local clients = M.clients()
+  local clients, clients_complete = M.clients()
 
   local procs = Procs.new()
   for _, pane in ipairs(panes) do
@@ -169,7 +177,8 @@ function M.sessions()
     end)
   end
 
-  return ret
+  local procs_complete = not procs.is_complete or procs:is_complete()
+  return ret, panes_complete ~= false and clients_complete ~= false and procs_complete
 end
 
 function M:pane_id()
