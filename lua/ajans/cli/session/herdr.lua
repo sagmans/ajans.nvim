@@ -345,9 +345,6 @@ local function server_incompatibility(status)
     return "The running Herdr server is incompatible with the installed client; restart the Herdr server. "
       .. M.RESTART_WARNING
   end
-  if status.running and status.restart_needed == true then
-    return "The running Herdr server uses a different version; restart the Herdr server. " .. M.RESTART_WARNING
-  end
 end
 
 ---@return boolean

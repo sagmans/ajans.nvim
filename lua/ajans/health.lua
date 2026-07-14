@@ -1,3 +1,5 @@
+local Client = require("ajans.cli.session.herdr.client")
+
 local M = {}
 
 local start = vim.health.start or vim.health.report_start
@@ -36,10 +38,19 @@ function M.check()
           "The running Herdr server is incompatible with the installed client; restart the Herdr server. "
             .. Herdr.RESTART_WARNING
         )
-      elseif status.running and status.restart_needed == true then
-        error("The running Herdr server uses a different version; restart the Herdr server. " .. Herdr.RESTART_WARNING)
       elseif status.running then
-        ok("The selected Herdr server is running")
+        if status.restart_needed == true then
+          warn(
+            "The running Herdr server uses a different compatible version; restart when convenient. "
+              .. Herdr.RESTART_WARNING
+          )
+        end
+        local socket, socket_err = Client.trusted_socket(status)
+        if socket then
+          ok("The selected Herdr server is running with a trusted local API socket")
+        else
+          error("The selected Herdr server API socket is unusable: " .. (socket_err or "unknown error"))
+        end
       else
         ok("The selected Herdr server is stopped and will start when Ajans creates a session")
       end

@@ -124,7 +124,7 @@ function M._exchange(path, payload, timeout)
 end
 
 ---@param path string
----@return boolean, string?
+---@return boolean, string?, string?
 function M.validate_socket(path)
   local link_stat = M._fs_lstat(path)
   if type(link_stat) ~= "table" or link_stat.type == "link" then
@@ -176,12 +176,16 @@ function M.validate_socket(path)
       return false, "Herdr API socket parent permits replacement by another user"
     end
   end
-  return true
+  return true, nil, resolved_path
 end
 
+---@param known_status? table
 ---@return string?, string?
-function M.trusted_socket()
-  local status, status_error = M._status()
+function M.trusted_socket(known_status)
+  local status, status_error = known_status, nil
+  if not status then
+    status, status_error = M._status()
+  end
   if not status then
     return nil, status_error or "Unable to query Herdr server"
   end
@@ -189,14 +193,14 @@ function M.trusted_socket()
   if status.running ~= true or type(socket) ~= "string" or socket == "" then
     return nil, "Herdr server status is missing a running API socket"
   end
-  if status.compatible == false or status.restart_needed == true then
+  if status.compatible == false then
     return nil, "Herdr server is not compatible with the active client"
   end
-  local safe, socket_error = M.validate_socket(socket)
+  local safe, socket_error, validated_socket = M.validate_socket(socket)
   if not safe then
     return nil, socket_error or "Herdr API socket is unsafe"
   end
-  return socket
+  return validated_socket or socket
 end
 
 ---@param method string

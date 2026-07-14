@@ -684,11 +684,6 @@ describe("herdr backend", function()
       status = { running = true, compatible = false, restart_needed = false },
       expected = "incompatible",
     },
-    {
-      name = "restart-required server",
-      status = { running = true, compatible = true, restart_needed = true },
-      expected = "different version",
-    },
   }) do
     it("does not spawn for a " .. case.name, function()
       local spawned = 0
@@ -716,6 +711,23 @@ describe("herdr backend", function()
       assert.matches(case.expected, errors[1])
     end)
   end
+
+  it("uses a compatible running server that recommends restart", function()
+    local spawned = false
+    Herdr.validate = function()
+      return true
+    end
+    Herdr.server_status = function()
+      return { running = true, compatible = true, restart_needed = true }
+    end
+    Herdr._spawn = function()
+      spawned = true
+    end
+
+    assert.is_true(Herdr.ensure_server())
+    assert.is_true(Herdr.is_server_running())
+    assert.is_false(spawned)
+  end)
 
   it("discovers every pane using stable names, label aliases, and process metadata fallback", function()
     setup_config({

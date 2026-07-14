@@ -1,5 +1,6 @@
 ---@module 'luassert'
 
+local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
 local Herdr = require("ajans.cli.session.herdr")
 local Session = require("ajans.cli.session")
@@ -33,6 +34,7 @@ describe("health", function()
   local original_selected_backend
   local original_validate
   local original_server_status
+  local original_trusted_socket
 
   before_each(function()
     original_executable = vim.fn.executable
@@ -41,6 +43,10 @@ describe("health", function()
     original_selected_backend = Session.selected_backend
     original_validate = Herdr.validate
     original_server_status = Herdr.server_status
+    original_trusted_socket = Client.trusted_socket
+    Client.trusted_socket = function()
+      return "/tmp/herdr-test.sock"
+    end
     vim.fn.has = function(feature)
       return feature == "nvim-0.11.2" and 1 or 0
     end
@@ -53,6 +59,7 @@ describe("health", function()
     Session.selected_backend = original_selected_backend
     Herdr.validate = original_validate
     Herdr.server_status = original_server_status
+    Client.trusted_socket = original_trusted_socket
     package.loaded["ajans.health"] = nil
     pcall(vim.api.nvim_del_user_command, "Ajans")
   end)
@@ -176,10 +183,39 @@ describe("health", function()
 
     assert.is_true(
       vim.tbl_contains(
-        reports.error,
-        "The running Herdr server uses a different version; restart the Herdr server. "
+        reports.warn,
+        "The running Herdr server uses a different compatible version; restart when convenient. "
           .. "Restarting stops active pane processes; save work first or use Herdr's supported live handoff: "
           .. "https://herdr.dev/docs/session-state/"
+      )
+    )
+    assert.is_true(vim.tbl_contains(reports.ok, "The selected Herdr server is running with a trusted local API socket"))
+    assert.are.same({}, reports.error)
+  end)
+
+  it("reports an unusable running Herdr API socket", function()
+    setup_config({ cli = { mux = { backend = "herdr" } } })
+    Session.selected_backend = function()
+      return "herdr"
+    end
+    Herdr.validate = function()
+      return true, nil, "0.7.3"
+    end
+    Herdr.server_status = function()
+      return { running = true, compatible = true, socket = "/tmp/herdr.sock" }
+    end
+    Client.trusted_socket = function(status)
+      assert.are.equal("/tmp/herdr.sock", status.socket)
+      return nil, "Herdr API socket permits group or other access"
+    end
+    local reports = reporter()
+
+    require("ajans.health").check()
+
+    assert.is_true(
+      vim.tbl_contains(
+        reports.error,
+        "The selected Herdr server API socket is unusable: Herdr API socket permits group or other access"
       )
     )
   end)

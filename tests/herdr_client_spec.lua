@@ -55,8 +55,8 @@ describe("Herdr client", function()
     Client._status = function()
       return { running = true, socket = "/tmp/herdr-test.sock" }
     end
-    Client.validate_socket = function()
-      return true
+    Client.validate_socket = function(path)
+      return true, nil, path
     end
     Client._exchange = function(path, payload, timeout)
       captured = { path = path, payload = vim.json.decode(payload), timeout = timeout }
@@ -240,7 +240,30 @@ describe("Herdr client", function()
       return 501
     end
 
-    assert.is_true(Client.validate_socket("/tmp/herdr.sock"))
+    local safe, _, resolved = Client.validate_socket("/tmp/herdr.sock")
+    assert.is_true(safe)
+    assert.are.equal("/private/tmp/herdr.sock", resolved)
+  end)
+
+  it("connects only through the validated canonical socket path", function()
+    Client._status = function()
+      return { running = true, compatible = true, socket = "/tmp/herdr.sock" }
+    end
+    Client.validate_socket = function(path)
+      assert.are.equal("/tmp/herdr.sock", path)
+      return true, nil, "/private/tmp/herdr.sock"
+    end
+    local connected
+    Client._exchange = function(path, payload)
+      connected = path
+      local request = vim.json.decode(payload)
+      return vim.json.encode({ id = request.id, result = { ok = true } })
+    end
+
+    local result = Client.run({ "herdr", "agent", "send", "term-1", "secret" })
+
+    assert.are.equal(0, result.code)
+    assert.are.equal("/private/tmp/herdr.sock", connected)
   end)
 
   it("accepts an owner-only socket", function()
@@ -373,6 +396,23 @@ describe("Herdr client", function()
 
     assert.are.equal(1, result.code)
     assert.is_false(exchanged)
+  end)
+
+  it("uses a compatible server that recommends restart", function()
+    local captured = capture_request()
+    Client._status = function()
+      return {
+        running = true,
+        compatible = true,
+        restart_needed = true,
+        socket = "/tmp/herdr-test.sock",
+      }
+    end
+
+    local result = Client.run({ "herdr", "agent", "send", "term-1", "prompt" })
+
+    assert.are.equal(0, result.code)
+    assert.are.equal("agent.send", captured().payload.method)
   end)
 
   it("propagates Herdr API error envelopes", function()
