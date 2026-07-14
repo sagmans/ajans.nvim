@@ -459,6 +459,7 @@ function M:launch_argv()
     "TMUX_PANE",
   }) do
     env[key] = nil
+    unset[#unset + 1] = key
   end
   for key, value in pairs(self.tool.env or {}) do
     if value == false then
@@ -881,7 +882,9 @@ local function pane_runs_expected_tool(self)
       if self._authorized_pid == pid then
         return true
       end
-      matched_pid = matched_pid or pid
+      if not self._authorized_pid and (#(self.pids or {}) == 0 or vim.tbl_contains(self.pids, pid)) then
+        matched_pid = matched_pid or pid
+      end
     end
   end
   if self._authorized_pid then
@@ -945,15 +948,15 @@ local function drain_input(self)
   while #self._input_queue > 0 do
     local operation = table.remove(self._input_queue, 1)
     if operation.kind == "submit" then
-      if self._last_send_ok == false then
+      if self._last_send_ok == false or (self._authorized_pid and not self:accepts_automated_input()) then
         operation.ok = false
       else
         operation.ok = M.command({ "pane", "send-keys", self.herdr_pane_id, "enter" }) ~= nil
       end
       self._last_send_ok = nil
     else
-      local ok = true
-      if self.tool.mux_focus then
+      local ok = not self._authorized_pid or self:accepts_automated_input()
+      if self.tool.mux_focus and ok then
         ok = M.command({ "pane", "send-keys", self.herdr_pane_id, "escape", "[", "I" }) ~= nil
       end
       for _, chunk in ipairs(ok and send_chunks(operation.text) or {}) do

@@ -334,6 +334,30 @@ describe("Herdr client", function()
     assert.are.equal("agent.send", captured().payload.method)
   end)
 
+  it("keeps project secrets out of the detached server environment", function()
+    vim.fn.environ = function()
+      return {
+        HOME = "/home/test",
+        PATH = "/usr/bin",
+        HERDR_SOCKET_PATH = "/tmp/herdr.sock",
+        PROJECT_SECRET = "must-not-persist",
+      }
+    end
+    local observed
+    local handle = { unref = function() end }
+    vim.uv.spawn = function(_, opts)
+      observed = opts
+      return handle, 42
+    end
+
+    assert.is_true(Client.spawn_server())
+    assert.are.same({
+      "HOME=/home/test",
+      "PATH=/usr/bin",
+      "HERDR_SOCKET_PATH=/tmp/herdr.sock",
+    }, observed.env)
+  end)
+
   it("reports detached server spawn failures", function()
     vim.uv.spawn = function()
       return nil, "EACCES"

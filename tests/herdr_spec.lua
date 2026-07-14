@@ -1877,6 +1877,37 @@ describe("herdr backend", function()
     assert.is_false(session:accepts_automated_input())
   end)
 
+  it("revalidates the pinned process before delivering queued input", function()
+    local tool = test_tool()
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "claude"
+    end
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+      tool = tool,
+    })
+    local pid = 42
+    local sends = 0
+    Herdr._run = function(cmd)
+      if cmd[2] == "agent" and cmd[3] == "get" then
+        return success({ agent = { terminal_id = "term-1", pane_id = "pane-1" } })
+      end
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = pid, cmdline = "claude" } } } })
+      end
+      sends = sends + 1
+      return completed()
+    end
+
+    assert.is_true(session:accepts_automated_input())
+    pid = 43
+    assert.is_false(session:send("secret"))
+    assert.are.equal(0, sends)
+  end)
+
   it("validates a custom pane still runs the configured tool", function()
     local process = "custom-agent"
     local tool = test_tool({ name = "custom" })
