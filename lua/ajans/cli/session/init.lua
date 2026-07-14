@@ -233,6 +233,19 @@ function M.selected_backend()
   return M.backend
 end
 
+---@param left ajans.cli.Session
+---@param right ajans.cli.Session
+---@return boolean
+local function same_target(left, right)
+  local left_tool = type(left.tool) == "table" and left.tool.name or left.tool
+  local right_tool = type(right.tool) == "table" and right.tool.name or right.tool
+  return left_tool == right_tool
+    and (left.mux_identity or left.identity) == (right.mux_identity or right.identity)
+    and (not left.herdr_name or left.herdr_name == right.herdr_name)
+    and (not left.herdr_label or left.herdr_label == right.herdr_label)
+    and (not left.herdr_agent_session or vim.deep_equal(left.herdr_agent_session, right.herdr_agent_session))
+end
+
 function M.sessions()
   M.setup()
   local ret = {} ---@type ajans.cli.Session[]
@@ -253,20 +266,28 @@ function M.sessions()
       if session.identity then
         identities[session.identity] = session
       end
-      if M._attached[state.id] then
-        M._attached[state.id] = session
-        M._attachment_generation = M._attachment_generation + 1
+      local attached = M._attached[state.id]
+      if attached then
+        if same_target(attached, session) then
+          session._authorized_pid = attached._authorized_pid
+          M._attached[state.id] = session
+          M._attachment_generation = M._attachment_generation + 1
+        else
+          M.detach(attached)
+        end
       end
     end
   end
 
   local function parent_for(session)
     if session.mux_identity and identities[session.mux_identity] then
-      return identities[session.mux_identity]
+      local candidate = identities[session.mux_identity]
+      return same_target(session, candidate) and candidate or nil
     end
     for _, candidate in ipairs(ret) do
       if
         candidate.backend == name
+        and same_target(session, candidate)
         and not vim.tbl_isempty(session.pids or {})
         and Util.overlaps(candidate.pids or {}, session.pids or {})
       then
@@ -281,6 +302,9 @@ function M.sessions()
       local parent = terminal and parent_for(session) or nil
       local retained = authoritative == false and (terminal or session.backend == name)
       if (parent or retained) and session:is_running() then
+        if parent and session.parent and same_target(session.parent, parent) then
+          parent._authorized_pid = session.parent._authorized_pid
+        end
         session.parent = parent or session.parent
         ret[#ret + 1] = session
         ids[id] = true
@@ -341,6 +365,9 @@ function M.attach(session)
       mux_session = session.mux_session,
       mux_identity = session.identity,
       external = session.external,
+      herdr_name = session.herdr_name,
+      herdr_label = session.herdr_label,
+      herdr_agent_session = session.herdr_agent_session,
       fresh = fresh,
       parent = session,
     })

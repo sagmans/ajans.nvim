@@ -12,6 +12,7 @@ describe("Herdr client", function()
   local original_environ
   local original_validate_socket
   local original_fs_stat
+  local original_fs_lstat
   local original_getuid
 
   before_each(function()
@@ -24,6 +25,7 @@ describe("Herdr client", function()
     original_environ = vim.fn.environ
     original_validate_socket = Client.validate_socket
     original_fs_stat = Client._fs_stat
+    original_fs_lstat = Client._fs_lstat
     original_getuid = Client._getuid
     Client._request_id = 0
   end)
@@ -38,6 +40,7 @@ describe("Herdr client", function()
     vim.fn.environ = original_environ
     Client.validate_socket = original_validate_socket
     Client._fs_stat = original_fs_stat
+    Client._fs_lstat = original_fs_lstat
     Client._getuid = original_getuid
   end)
 
@@ -180,13 +183,22 @@ describe("Herdr client", function()
     { name = "foreign owner", stat = { type = "socket", uid = 502, mode = 384 } },
     { name = "broad permissions", stat = { type = "socket", uid = 501, mode = 438 } },
     { name = "replaceable parent", stat = { type = "socket", uid = 501, mode = 384 }, parent_mode = 511 },
+    { name = "foreign parent", stat = { type = "socket", uid = 501, mode = 384 }, parent_uid = 502 },
+    { name = "symlink socket", stat = { type = "socket", uid = 501, mode = 384 }, socket_link = true },
   }) do
     it("rejects a " .. case.name, function()
       Client._fs_stat = function(path)
         if path == "/tmp/herdr.sock" then
           return case.stat
         end
-        return { type = "directory", uid = 501, mode = case.parent_mode or 493 }
+        return { type = "directory", uid = case.parent_uid or 501, mode = case.parent_mode or 493 }
+      end
+      Client._fs_lstat = function(path)
+        local value = vim.deepcopy(Client._fs_stat(path))
+        if case.socket_link and path == "/tmp/herdr.sock" then
+          value.type = "link"
+        end
+        return value
       end
       Client._getuid = function()
         return 501
@@ -206,6 +218,7 @@ describe("Herdr client", function()
       end
       return { type = "directory", uid = 501, mode = 493 }
     end
+    Client._fs_lstat = Client._fs_stat
     Client._getuid = function()
       return 501
     end

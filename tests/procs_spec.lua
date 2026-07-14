@@ -2,16 +2,20 @@
 
 local Procs = require("ajans.cli.procs")
 local Tmux = require("ajans.cli.session.tmux")
+local Util = require("ajans.util")
 
 describe("process inventory", function()
   local original_new
+  local original_exec
 
   before_each(function()
     original_new = Procs.new
+    original_exec = Util.exec
   end)
 
   after_each(function()
     Procs.new = original_new
+    Util.exec = original_exec
   end)
   it("parses Linux proc stat records with spaces in the command name", function()
     local pid, ppid = Procs.parse_proc_stat("42 (agent process) S 7 42 42 0")
@@ -41,8 +45,12 @@ describe("process inventory", function()
       return original_new({ force_proc = true })
     end
     local pid = vim.fn.getpid()
+    Util.exec = function()
+      return { pid .. ":nvim" }
+    end
     local session = setmetatable({
       tmux_pid = pid,
+      tmux_pane_id = "%1",
       tool = {
         is_proc = function(_, proc)
           return proc.pid == pid

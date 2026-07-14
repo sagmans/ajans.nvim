@@ -307,7 +307,8 @@ local adapters = {
       assert.are.same({}, calls)
       assert.is_false(unresolved._last_send_ok)
 
-      local process = "zsh"
+      local process = "contract-agent"
+      local current = "zsh"
       local protected = tmux_session()
       protected.tool.is_proc = function(_, proc)
         return proc.cmd == "contract-agent"
@@ -315,12 +316,18 @@ local adapters = {
       Procs.new = function()
         return {
           walk = function(_, _, callback)
-            callback({ cmd = process })
+            local proc = { pid = 101, cmd = process }
+            assert.is_string(proc.cmd)
+            callback(proc)
           end,
         }
       end
+      Util.exec = function(cmd)
+        assert.are.equal("display-message", cmd[2])
+        return { "101:" .. current }
+      end
       assert.is_false(protected:accepts_automated_input())
-      process = "contract-agent"
+      current = "contract-agent"
       assert.is_true(protected:accepts_automated_input())
     end,
     display = function()

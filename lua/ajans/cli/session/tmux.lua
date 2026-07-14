@@ -79,14 +79,38 @@ function M:accepts_automated_input()
   if not self.tmux_pid or type(self.tool.is_proc) ~= "function" then
     return false
   end
-  local found = false
+  local pane_id = self:pane_id()
+  local lines = pane_id
+    and Util.exec({
+      "tmux",
+      "display-message",
+      "-p",
+      "-t",
+      pane_id,
+      "#{pane_pid}:#{pane_current_command}",
+    }, { notify = false })
+  local pane_pid, current
+  if lines and lines[1] then
+    pane_pid, current = lines[1]:match("^(%d+):(.*)$")
+  end
+  if tonumber(pane_pid) ~= self.tmux_pid or not current or current == "" then
+    return false
+  end
+  local matched_pid
   Procs.new():walk(self.tmux_pid, function(proc)
-    if self.tool:is_proc(proc) then
-      found = true
-      return true
+    if self.tool:is_proc(proc) and proc.cmd:find(current, 1, true) then
+      if self._authorized_pid == proc.pid then
+        matched_pid = proc.pid
+        return true
+      end
+      matched_pid = matched_pid or proc.pid
     end
   end)
-  return found
+  if self._authorized_pid then
+    return matched_pid == self._authorized_pid
+  end
+  self._authorized_pid = matched_pid
+  return matched_pid ~= nil
 end
 
 ---@param ret string[]

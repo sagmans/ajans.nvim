@@ -6,6 +6,7 @@ M.TIMEOUT = 5000
 M.MAX_RESPONSE_BYTES = 1024 * 1024
 M._request_id = 0
 M._fs_stat = vim.uv.fs_stat
+M._fs_lstat = vim.uv.fs_lstat
 M._getuid = vim.uv.getuid
 
 local SERVER_ENV_KEYS = {
@@ -124,8 +125,9 @@ end
 ---@param path string
 ---@return boolean, string?
 function M.validate_socket(path)
+  local link_stat = M._fs_lstat(path)
   local stat = M._fs_stat(path)
-  if type(stat) ~= "table" or stat.type ~= "socket" then
+  if type(link_stat) ~= "table" or link_stat.type == "link" or type(stat) ~= "table" or stat.type ~= "socket" then
     return false, "Herdr API path is not a local socket"
   end
   local uid = M._getuid and M._getuid()
@@ -136,8 +138,16 @@ function M.validate_socket(path)
     return false, "Herdr API socket permits group or other access"
   end
   for parent in vim.fs.parents(path) do
+    local parent_link_stat = M._fs_lstat(parent)
     local parent_stat = M._fs_stat(parent)
-    if type(parent_stat) ~= "table" or parent_stat.type ~= "directory" or type(parent_stat.mode) ~= "number" then
+    if
+      type(parent_link_stat) ~= "table"
+      or parent_link_stat.type == "link"
+      or type(parent_stat) ~= "table"
+      or parent_stat.type ~= "directory"
+      or type(parent_stat.mode) ~= "number"
+      or (uid and parent_stat.uid ~= uid and parent_stat.uid ~= 0)
+    then
       return false, "Herdr API socket parent is not a trusted directory"
     end
     local writable = bit.band(parent_stat.mode, 0x12) ~= 0

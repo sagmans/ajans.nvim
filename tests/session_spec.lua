@@ -260,6 +260,7 @@ describe("session mux", function()
             identity = "herdr:terminal-1",
             cwd = cwd,
             tool = test_tool(),
+            herdr_name = "ajans:claude expected",
             priority = 10,
           },
         }
@@ -275,6 +276,13 @@ describe("session mux", function()
       started = true,
       mux_backend = "herdr",
       mux_identity = "herdr:terminal-1",
+      herdr_name = "ajans:claude expected",
+      parent = {
+        identity = "herdr:terminal-1",
+        tool = test_tool(),
+        herdr_name = "ajans:claude expected",
+        _authorized_pid = 42,
+      },
       priority = 100,
       is_running = function()
         return true
@@ -291,6 +299,81 @@ describe("session mux", function()
     assert.are.equal(1, #states)
     assert.are.equal(wrapper, states[1].session)
     assert.are.equal("herdr terminal-1", wrapper.parent.id)
+    assert.are.equal(42, wrapper.parent._authorized_pid)
+  end)
+
+  it("preserves authorized process identity across matching refreshes", function()
+    local cwd = vim.uv.cwd()
+    local tool = test_tool()
+    Session.backends = {}
+    Session.register("herdr", {
+      sessions = function()
+        return {
+          {
+            id = "herdr terminal-1",
+            identity = "herdr:terminal-1",
+            cwd = cwd,
+            tool = tool,
+            herdr_name = "ajans:claude expected",
+          },
+        }
+      end,
+    })
+    Session.backend = "herdr"
+    Session._attached["herdr terminal-1"] = {
+      id = "herdr terminal-1",
+      identity = "herdr:terminal-1",
+      cwd = cwd,
+      tool = tool,
+      backend = "herdr",
+      herdr_name = "ajans:claude expected",
+      _authorized_pid = 42,
+      detach = function() end,
+    }
+
+    Session.sessions()
+
+    assert.are.equal(42, Session._attached["herdr terminal-1"]._authorized_pid)
+  end)
+
+  it("detaches a terminal wrapper when its stable pane changes tools", function()
+    local cwd = vim.uv.cwd()
+    local detached = false
+    local candidate_tool = test_tool()
+    candidate_tool.name = "codex"
+    Session.backends = {}
+    Session.register("herdr", {
+      sessions = function()
+        return {
+          {
+            id = "herdr terminal-1",
+            identity = "herdr:terminal-1",
+            cwd = cwd,
+            tool = candidate_tool,
+          },
+        }
+      end,
+    })
+    Session.backend = "herdr"
+    Session._attached["terminal: claude abc"] = {
+      id = "terminal: claude abc",
+      cwd = cwd,
+      tool = test_tool(),
+      backend = "terminal",
+      mux_backend = "herdr",
+      mux_identity = "herdr:terminal-1",
+      is_running = function()
+        return true
+      end,
+      detach = function()
+        detached = true
+      end,
+    }
+
+    Session.sessions()
+
+    assert.is_true(detached)
+    assert.is_nil(Session._attached["terminal: claude abc"])
   end)
 
   it("keeps tmux terminal wrappers attached during session refresh", function()
