@@ -1,5 +1,6 @@
 ---@module 'luassert'
 
+local Session = require("ajans.cli.session")
 local State = require("ajans.cli.state")
 local Util = require("ajans.util")
 
@@ -8,12 +9,14 @@ describe("cli", function()
   local original_with
   local original_warn
   local original_schedule
+  local original_owns
 
   before_each(function()
     original_select = package.loaded["ajans.cli.ui.select"]
     original_with = State.with
     original_warn = Util.warn
     original_schedule = vim.schedule
+    original_owns = Session.owns
   end)
 
   after_each(function()
@@ -21,6 +24,7 @@ describe("cli", function()
     State.with = original_with
     Util.warn = original_warn
     vim.schedule = original_schedule
+    Session.owns = original_owns
   end)
 
   it("refuses automated input after the expected process exits", function()
@@ -47,6 +51,9 @@ describe("cli", function()
     Util.warn = function(message)
       warning = message
     end
+    Session.owns = function()
+      return true
+    end
     vim.schedule = function(callback)
       callback()
     end
@@ -55,6 +62,92 @@ describe("cli", function()
 
     assert.is_false(sent)
     assert.matches("Refusing to send", warning)
+  end)
+
+  it("cancels accepted input when the session detached during authorization", function()
+    local authorization
+    local attached = true
+    local formatted = false
+    local sent = false
+    local session = {
+      id = "session-1",
+      authorize_automated_input = function(_, done)
+        authorization = done
+      end,
+      send = function()
+        sent = true
+      end,
+    }
+    State.with = function(callback)
+      callback({
+        tool = {
+          name = "pi",
+          format = function()
+            formatted = true
+            return "secret"
+          end,
+        },
+        session = session,
+      })
+    end
+    Session.owns = function(candidate)
+      return attached and candidate == session
+    end
+    vim.schedule = function(callback)
+      callback()
+    end
+
+    require("ajans.cli").send({ text = { { "repository context" } } })
+    attached = false
+    authorization(true)
+
+    assert.is_false(formatted)
+    assert.is_false(sent)
+  end)
+
+  it("formats, sends, and submits accepted input exactly once", function()
+    local authorization
+    local formats = 0
+    local sends = {}
+    local submits = 0
+    local session = {
+      id = "session-1",
+      authorize_automated_input = function(_, done)
+        authorization = done
+      end,
+      send = function(_, value)
+        sends[#sends + 1] = value
+      end,
+      submit = function()
+        submits = submits + 1
+      end,
+    }
+    State.with = function(callback)
+      callback({
+        tool = {
+          name = "pi",
+          format = function()
+            formats = formats + 1
+            return "formatted"
+          end,
+        },
+        session = session,
+      })
+    end
+    Session.owns = function(candidate)
+      return candidate == session
+    end
+    vim.schedule = function(callback)
+      callback()
+    end
+
+    require("ajans.cli").send({ text = { { "context" } }, submit = true })
+    assert.are.equal(0, formats)
+    authorization(true)
+
+    assert.are.equal(1, formats)
+    assert.are.same({ "formatted\n" }, sends)
+    assert.are.equal(1, submits)
   end)
 
   it("selects with an empty default filter", function()

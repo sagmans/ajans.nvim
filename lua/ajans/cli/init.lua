@@ -1,4 +1,5 @@
 local Context = require("ajans.cli.context")
+local Session = require("ajans.cli.session")
 local State = require("ajans.cli.state")
 local Util = require("ajans.util")
 
@@ -192,15 +193,20 @@ function M.send(opts)
   State.with(function(state)
     Util.exit_visual_mode()
     vim.schedule(function()
-      state.session:authorize_automated_input(function(accepted)
-        if not accepted then
+      local session = state.session
+      session:authorize_automated_input(function(accepted)
+        if not accepted or not Session.owns(session) then
           Util.warn(("Refusing to send: `%s` is no longer the active session process"):format(state.tool.name))
           return
         end
         msg = state.tool:format(text)
-        state.session:send(msg .. "\n")
-        if opts.submit then
-          state.session:submit()
+        if not Session.owns(session) then
+          Util.warn(("Refusing to send: `%s` is no longer the active session process"):format(state.tool.name))
+          return
+        end
+        session:send(msg .. "\n")
+        if opts.submit and Session.owns(session) then
+          session:submit()
         end
       end)
     end)

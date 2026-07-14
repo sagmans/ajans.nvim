@@ -148,34 +148,37 @@ end
 
 ---@param callback fun(accepted:boolean)
 function M:authorize_automated_input(callback)
+  local function complete(accepted)
+    callback(accepted == true and not self.closed)
+  end
   local parent = self.parent
   if not (self.fresh and parent and parent.backend == "tmux" and not parent.tmux_pid) then
     if parent and parent.authorize_automated_input then
-      parent:authorize_automated_input(callback)
+      parent:authorize_automated_input(complete)
     else
-      callback(self:accepts_automated_input())
+      complete(self:accepts_automated_input())
     end
     return
   end
   local deadline = vim.uv.now() + TARGET_MAX_WAIT
   local function check()
-    if not self:is_running() then
+    if self.closed or not self:is_running() then
       self.fresh = false
-      callback(false)
+      complete(false)
       return
     end
     local resolved = pcall(parent.pane_id, parent)
     if not resolved then
       self.fresh = false
-      callback(false)
+      complete(false)
       return
     end
     if parent.tmux_pid and parent:accepts_automated_input() then
       self.fresh = false
-      callback(true)
+      complete(true)
     elseif vim.uv.now() >= deadline then
       self.fresh = false
-      callback(false)
+      complete(false)
     else
       vim.defer_fn(check, TARGET_CHECK_INTERVAL)
     end
@@ -207,7 +210,7 @@ function M:wo(opts)
 end
 
 function M:start()
-  if self:is_running() then
+  if self.closed or self:is_running() then
     return
   end
 
@@ -421,7 +424,7 @@ function M:on_ready()
     end
     local function deliver(accepted)
       local ok, delivered = pcall(function()
-        local sent = accepted and self:is_running()
+        local sent = accepted and not self.closed and self:is_running()
         if sent then
           if self.parent and self.parent.send then
             local result
@@ -523,6 +526,9 @@ function M:is_focused()
 end
 
 function M:show()
+  if self.closed then
+    return
+  end
   self:start()
   if not self:is_running() then
     return
@@ -602,6 +608,9 @@ end
 
 ---@param input string
 function M:send(input)
+  if self.closed then
+    return false
+  end
   self:show()
   if not self:is_running() then
     return
@@ -610,7 +619,7 @@ function M:send(input)
 end
 
 function M:submit()
-  if not self:is_running() then
+  if self.closed or not self:is_running() then
     return
   end
   self:send("\r") -- Updated to use the send method

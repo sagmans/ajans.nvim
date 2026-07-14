@@ -270,6 +270,8 @@ function M.sessions()
       if attached then
         if same_target(attached, session) then
           session._authorized_pid = attached._authorized_pid
+          session._authorized_process = attached._authorized_process
+          session.fresh = attached.fresh
           M._attached[state.id] = session
           M._attachment_generation = M._attachment_generation + 1
         else
@@ -304,6 +306,8 @@ function M.sessions()
       if (parent or retained) and session:is_running() then
         if parent and session.parent and same_target(session.parent, parent) then
           parent._authorized_pid = session.parent._authorized_pid
+          parent._authorized_process = session.parent._authorized_process
+          parent.fresh = session.parent.fresh
         end
         session.parent = parent or session.parent
         ret[#ret + 1] = session
@@ -387,6 +391,12 @@ function M.attach(session)
     Util.emit("AjansCliAttach", { id = session.id })
   end)
   return session
+end
+
+---@param session ajans.cli.Session
+---@return boolean
+function M.owns(session)
+  return M._attached[session.id] == session
 end
 
 function M.attached_snapshot()

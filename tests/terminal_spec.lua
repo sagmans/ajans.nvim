@@ -112,6 +112,46 @@ describe("terminal", function()
     assert.are.same({}, terminal.send_queue)
   end)
 
+  it("cancels queued delivery when closed during authorization", function()
+    local Terminal = require("ajans.cli.terminal")
+    local authorization
+    local sent = false
+    vim.schedule = function(callback)
+      callback()
+    end
+    local terminal = setmetatable({
+      job = 42,
+      send_queue = { "secret" },
+      timer = {
+        start = function(_, _, _, callback)
+          callback()
+        end,
+      },
+      parent = {
+        send = function()
+          sent = true
+        end,
+        authorize_automated_input = function(_, callback)
+          authorization = callback
+        end,
+      },
+      is_running = function()
+        return true
+      end,
+      is_focused = function()
+        return false
+      end,
+    }, Terminal)
+
+    terminal:on_ready()
+    terminal.closed = true
+    authorization(true)
+
+    assert.is_false(sent)
+    assert.are.same({}, terminal.send_queue)
+    assert.is_false(terminal._sending)
+  end)
+
   it("delivers an accepted Enter exactly once through its mux parent", function()
     local Terminal = require("ajans.cli.terminal")
     local sends = 0
@@ -200,6 +240,26 @@ describe("terminal", function()
       assert.are.same({}, terminal.send_queue)
     end
     assert.are.equal(2, #reports)
+  end)
+
+  it("does not restart or queue input after close", function()
+    local Terminal = require("ajans.cli.terminal")
+    local started = false
+    local terminal = setmetatable({
+      closed = true,
+      send_queue = {},
+      start = function()
+        started = true
+      end,
+      is_running = function()
+        return false
+      end,
+    }, Terminal)
+
+    assert.is_false(terminal:send("secret"))
+    assert.is_nil(terminal:submit())
+    assert.is_false(started)
+    assert.are.same({}, terminal.send_queue)
   end)
 
   it("closes terminal resources when detached", function()
