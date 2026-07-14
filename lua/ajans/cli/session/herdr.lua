@@ -886,16 +886,24 @@ local function pane_runs_expected_tool(self)
     return false
   end
   local matched_pid
+  local matched_process
   local inventory_ok, inventory = pcall(Procs.new)
   inventory = inventory_ok and inventory or nil
   for _, process in ipairs(info.foreground_processes or {}) do
     local pid = tonumber(process.pid)
-    if pid and self.tool:is_proc(to_proc(process, inventory)) then
-      if self._authorized_pid == pid then
+    local proc = pid and to_proc(process, inventory) or nil
+    if proc and self.tool:is_proc(proc) then
+      local identity = Procs.identity(proc)
+      if self._authorized_process and Procs.same_identity(self._authorized_process, identity) then
+        return true
+      end
+      if self._authorized_pid == pid and not self._authorized_process then
+        self._authorized_process = identity
         return true
       end
       if not self._authorized_pid and (#(self.pids or {}) == 0 or vim.tbl_contains(self.pids, pid)) then
         matched_pid = matched_pid or pid
+        matched_process = matched_process or identity
       end
     end
   end
@@ -903,6 +911,7 @@ local function pane_runs_expected_tool(self)
     return false
   end
   self._authorized_pid = matched_pid
+  self._authorized_process = matched_process
   return matched_pid ~= nil
 end
 

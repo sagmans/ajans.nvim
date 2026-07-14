@@ -88,7 +88,12 @@ function M.to_proc(process, inventory)
     pid = pid,
     ppid = tonumber(process.ppid) or hydrated and hydrated.ppid or 0,
     cmd = cmd,
+    argv = type(process.argv) == "table" and process.argv or hydrated and hydrated.argv,
     executable = executable,
+    runtime_executable = hydrated and hydrated.runtime_executable or process.name,
+    start_time = process.start_time or hydrated and hydrated.start_time,
+    pgid = tonumber(process.pgid or process.process_group_id) or hydrated and hydrated.pgid,
+    tpgid = tonumber(process.tpgid) or hydrated and hydrated.tpgid,
     cwd = process.cwd,
     env = process.env,
   }

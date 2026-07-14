@@ -2016,6 +2016,7 @@ describe("herdr backend", function()
     session.herdr_agent_session = { source = "claude", value = "session-1" }
     local name = "other"
     local pids = { 42 }
+    local start_time = "start-1"
     Herdr._run = function(cmd)
       if cmd[2] == "agent" then
         return success({
@@ -2031,7 +2032,7 @@ describe("herdr backend", function()
       return success({
         process_info = {
           foreground_processes = vim.tbl_map(function(pid)
-            return { pid = pid, cmdline = "claude" }
+            return { pid = pid, cmdline = "claude", name = "claude", start_time = start_time }
           end, pids),
         },
       })
@@ -2040,6 +2041,9 @@ describe("herdr backend", function()
     assert.is_false(session:accepts_automated_input())
     name = session.herdr_name
     assert.is_true(session:accepts_automated_input())
+    start_time = "start-2"
+    assert.is_false(session:accepts_automated_input())
+    start_time = "start-1"
     pids = { 43, 42 }
     assert.is_true(session:accepts_automated_input())
     pids = { 43 }

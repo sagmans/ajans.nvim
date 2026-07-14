@@ -26,7 +26,7 @@ describe("cli tool runtime configs", function()
       assert.is_table(Config.cli.tools[name], name)
     end
 
-    for name in pairs(Config.cli.tools) do
+    for name in pairs(runtime_tools) do
       local tool = Tool.get(name)
 
       assert.is_string(runtime_tools[name], name)
@@ -44,6 +44,25 @@ describe("cli tool runtime configs", function()
     assert.is_true(tool:is_proc({ cmd = "/opt/bin/claude --banner", executable = "claude" }))
     assert.is_false(tool:is_proc({ cmd = "/usr/bin/cat - claude", executable = "cat" }))
     assert.is_false(tool:is_proc({ cmd = "/opt/bin/claude-helper", executable = "claude-helper" }))
+    assert.is_false(tool:is_proc({ cmd = "claude", executable = "claude", runtime_executable = "evil" }))
+  end)
+
+  it("matches interpreter scripts and executable-anchored arguments", function()
+    local Tool = require("ajans.cli.tool")
+    local interpreted = Tool.get("pi")
+    local command_sensitive = setmetatable({
+      cmd = { "custom" },
+      config = { is_proc = "\\<custom\\>.*--agent-mode" },
+    }, Tool)
+
+    assert.is_true(interpreted:is_proc({
+      cmd = "node /opt/bin/pi --model test",
+      argv = { "node", "/opt/bin/pi", "--model", "test" },
+      executable = "node",
+      runtime_executable = "/usr/bin/node",
+    }))
+    assert.is_true(command_sensitive:is_proc({ cmd = "/opt/bin/custom --agent-mode", runtime_executable = "custom" }))
+    assert.is_false(command_sensitive:is_proc({ cmd = "/usr/bin/cat custom --agent-mode", runtime_executable = "cat" }))
   end)
 end)
 

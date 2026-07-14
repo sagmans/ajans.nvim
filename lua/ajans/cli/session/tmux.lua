@@ -8,6 +8,11 @@ local Util = require("ajans.util")
 local M = {}
 M.__index = M
 
+M.AUTHORIZATION_TIMEOUT = 500
+M._run_async = function(cmd, opts, callback)
+  vim.system(cmd, opts, callback)
+end
+
 local PANE_FORMAT =
   "#{session_id}:#{pane_id}:#{pane_pid}:#{session_name}:#{?pane_current_path,#{pane_current_path},#{pane_start_path}}"
 
@@ -75,42 +80,126 @@ function M:is_running()
   return self.tmux_pid and vim.api.nvim_get_proc(self.tmux_pid) ~= nil
 end
 
+---@param pane_id string
+---@return string[]
+local function display_command(pane_id)
+  return {
+    "tmux",
+    "display-message",
+    "-p",
+    "-t",
+    pane_id,
+    "#{pane_pid}:#{pane_current_command}",
+  }
+end
+
+---@param self ajans.cli.muxer.Tmux
+---@param line string?
+---@param procs ajans.cli.Procs
+---@return boolean
+local function accepts_process(self, line, procs)
+  local pane_pid, current
+  if line then
+    pane_pid, current = line:match("^(%d+):(.*)$")
+  end
+  if tonumber(pane_pid) ~= self.tmux_pid or not current or current == "" then
+    return false
+  end
+  local matched_pid
+  local matched_process
+  procs:walk(self.tmux_pid, function(proc)
+    local foreground = not proc.pgid or not proc.tpgid or proc.pgid == proc.tpgid
+    if foreground and self.tool:is_proc(proc) and proc.cmd:find(current, 1, true) then
+      local identity = Procs.identity(proc)
+      if self._authorized_process and Procs.same_identity(self._authorized_process, identity) then
+        matched_pid = proc.pid
+        matched_process = identity
+        return true
+      end
+      if self._authorized_pid == proc.pid and not self._authorized_process then
+        matched_pid = proc.pid
+        matched_process = identity
+        return true
+      end
+      if not self._authorized_pid then
+        matched_pid = matched_pid or proc.pid
+        matched_process = matched_process or identity
+      end
+    end
+  end)
+  if self._authorized_pid and matched_pid ~= self._authorized_pid then
+    return false
+  end
+  self._authorized_pid = matched_pid
+  self._authorized_process = matched_process
+  return matched_pid ~= nil
+end
+
 function M:accepts_automated_input()
   if not self.tmux_pid or type(self.tool.is_proc) ~= "function" then
     return false
   end
   local pane_id = self:pane_id()
   local lines = pane_id
-    and Util.exec({
-      "tmux",
-      "display-message",
-      "-p",
-      "-t",
-      pane_id,
-      "#{pane_pid}:#{pane_current_command}",
-    }, { notify = false })
-  local pane_pid, current
-  if lines and lines[1] then
-    pane_pid, current = lines[1]:match("^(%d+):(.*)$")
+    and Util.exec(display_command(pane_id), {
+      notify = false,
+      timeout = M.AUTHORIZATION_TIMEOUT,
+    })
+  return accepts_process(self, lines and lines[1], Procs.new({ timeout = M.AUTHORIZATION_TIMEOUT }))
+end
+
+---@param callback fun(accepted:boolean)
+function M:authorize_automated_input(callback)
+  if not self.tmux_pid or type(self.tool.is_proc) ~= "function" then
+    callback(false)
+    return
   end
-  if tonumber(pane_pid) ~= self.tmux_pid or not current or current == "" then
-    return false
+  local pane_id = self:pane_id()
+  if not pane_id then
+    callback(false)
+    return
   end
-  local matched_pid
-  Procs.new():walk(self.tmux_pid, function(proc)
-    if self.tool:is_proc(proc) and proc.cmd:find(current, 1, true) then
-      if self._authorized_pid == proc.pid then
-        matched_pid = proc.pid
-        return true
-      end
-      matched_pid = matched_pid or proc.pid
+  local finished = false
+  local display_result
+  local process_result
+  local pending = Procs.ps_command() and 2 or 1
+  local function finish(value)
+    if finished then
+      return
     end
-  end)
-  if self._authorized_pid then
-    return matched_pid == self._authorized_pid
+    finished = true
+    callback(value)
   end
-  self._authorized_pid = matched_pid
-  return matched_pid ~= nil
+  local function complete()
+    pending = pending - 1
+    if pending > 0 or finished then
+      return
+    end
+    local line = display_result and display_result.code == 0 and vim.trim(display_result.stdout or "") or nil
+    local procs = process_result and process_result.code == 0 and Procs.from_ps_output(process_result.stdout or "")
+      or Procs.new({ force_proc = true, timeout = M.AUTHORIZATION_TIMEOUT })
+    finish(accepts_process(self, line, procs))
+  end
+  local function run(cmd, assign)
+    local ok = pcall(M._run_async, cmd, { text = true, timeout = M.AUTHORIZATION_TIMEOUT }, function(result)
+      vim.schedule(function()
+        assign(result)
+        complete()
+      end)
+    end)
+    if not ok then
+      finish(false)
+    end
+  end
+  run(display_command(pane_id), function(result)
+    display_result = result
+  end)
+  local ps = Procs.ps_command()
+  if ps then
+    run(ps, function(result)
+      process_result = result
+    end)
+  end
 end
 
 ---@param ret string[]

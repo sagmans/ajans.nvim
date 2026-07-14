@@ -17,11 +17,44 @@ describe("process inventory", function()
     Procs.new = original_new
     Util.exec = original_exec
   end)
-  it("parses Linux proc stat records with spaces in the command name", function()
-    local pid, ppid = Procs.parse_proc_stat("42 (agent process) S 7 42 42 0")
+  it("parses Linux proc identity with spaces in the command name", function()
+    local fields = {
+      "S",
+      "7",
+      "42",
+      "42",
+      "0",
+      "42",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "12345",
+    }
+    local pid, ppid, pgid, tpgid, start_time = Procs.parse_proc_stat("42 (agent process) " .. table.concat(fields, " "))
 
     assert.are.equal(42, pid)
     assert.are.equal(7, ppid)
+    assert.are.equal(42, pgid)
+    assert.are.equal(42, tpgid)
+    assert.are.equal("12345", start_time)
+  end)
+
+  it("distinguishes reused process IDs by incarnation", function()
+    local original = { pid = 42, start_time = "one", runtime_executable = "/usr/bin/pi" }
+
+    assert.is_true(Procs.same_identity(original, vim.deepcopy(original)))
+    assert.is_false(Procs.same_identity(original, { pid = 42, start_time = "two", runtime_executable = "/usr/bin/pi" }))
+    assert.is_false(Procs.same_identity(original, { pid = 42, start_time = "one", runtime_executable = "/tmp/pi" }))
   end)
 
   it("uses procfs when ps is unavailable", function()

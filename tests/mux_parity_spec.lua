@@ -310,6 +310,9 @@ local adapters = {
 
       local process = "contract-agent"
       local current = "zsh"
+      local pgid = 10
+      local tpgid = 10
+      local start_time = "start-1"
       local protected = tmux_session()
       protected.tool.is_proc = function(_, proc)
         return proc.cmd == "contract-agent"
@@ -317,7 +320,14 @@ local adapters = {
       Procs.new = function()
         return {
           walk = function(_, _, callback)
-            local proc = { pid = 101, cmd = process }
+            local proc = {
+              pid = 101,
+              cmd = process,
+              pgid = pgid,
+              tpgid = tpgid,
+              start_time = start_time,
+              runtime_executable = "contract-agent",
+            }
             assert.is_string(proc.cmd)
             callback(proc)
           end,
@@ -329,6 +339,13 @@ local adapters = {
       end
       assert.is_false(protected:accepts_automated_input())
       current = "contract-agent"
+      assert.is_true(protected:accepts_automated_input())
+      start_time = "start-2"
+      assert.is_false(protected:accepts_automated_input())
+      start_time = "start-1"
+      pgid = 11
+      assert.is_false(protected:accepts_automated_input())
+      pgid = tpgid
       assert.is_true(protected:accepts_automated_input())
 
       local deferred_send
@@ -684,9 +701,13 @@ describe("multiplexer parity contract", function()
       tmux_panes = Tmux.panes,
       tmux_clients = Tmux.clients,
       tmux_spawn = Tmux.spawn,
+      tmux_run_async = Tmux._run_async,
       procs_new = Procs.new,
+      procs_ps_command = Procs.ps_command,
+      procs_from_ps_output = Procs.from_ps_output,
       procs_pids = Procs.pids,
       defer_fn = vim.defer_fn,
+      schedule = vim.schedule,
       nvim_get_proc = vim.api.nvim_get_proc,
       tmux_env = vim.env.TMUX,
       herdr_env = vim.env.HERDR_ENV,
@@ -714,9 +735,13 @@ describe("multiplexer parity contract", function()
     Tmux.panes = originals.tmux_panes
     Tmux.clients = originals.tmux_clients
     Tmux.spawn = originals.tmux_spawn
+    Tmux._run_async = originals.tmux_run_async
     Procs.new = originals.procs_new
+    Procs.ps_command = originals.procs_ps_command
+    Procs.from_ps_output = originals.procs_from_ps_output
     Procs.pids = originals.procs_pids
     vim.defer_fn = originals.defer_fn
+    vim.schedule = originals.schedule
     vim.api.nvim_get_proc = originals.nvim_get_proc
     vim.env.TMUX = originals.tmux_env
     vim.env.HERDR_ENV = originals.herdr_env
@@ -737,6 +762,68 @@ describe("multiplexer parity contract", function()
       assert.is_nil(adapter.skip)
       assert.is_nil(adapter.unsupported)
     end
+  end)
+
+  it("authorizes tmux asynchronously under a fixed deadline", function()
+    local callbacks = 0
+    local accepted
+    local session = tmux_session()
+    vim.schedule = function(callback)
+      callback()
+    end
+    Procs.ps_command = function()
+      return { "ps", "inventory" }
+    end
+    Procs.from_ps_output = function()
+      return {
+        walk = function(_, _, callback)
+          callback({
+            pid = 102,
+            cmd = "contract-agent",
+            pgid = 10,
+            tpgid = 10,
+            start_time = "start-1",
+            runtime_executable = "contract-agent",
+          })
+        end,
+      }
+    end
+    Tmux._run_async = function(cmd, opts, callback)
+      assert.are.equal(Tmux.AUTHORIZATION_TIMEOUT, opts.timeout)
+      callback(cmd[1] == "tmux" and completed("101:contract-agent\n") or completed("process inventory\n"))
+    end
+
+    session:authorize_automated_input(function(value)
+      callbacks = callbacks + 1
+      accepted = value
+    end)
+
+    assert.is_true(accepted)
+    assert.are.equal(1, callbacks)
+  end)
+
+  it("rejects timed-out tmux authorization exactly once", function()
+    local callbacks = 0
+    local accepted
+    local session = tmux_session()
+    vim.schedule = function(callback)
+      callback()
+    end
+    Procs.ps_command = function()
+      return { "ps", "inventory" }
+    end
+    Tmux._run_async = function(_, opts, callback)
+      assert.are.equal(Tmux.AUTHORIZATION_TIMEOUT, opts.timeout)
+      callback(completed("", 124, "timed out"))
+    end
+
+    session:authorize_automated_input(function(value)
+      callbacks = callbacks + 1
+      accepted = value
+    end)
+
+    assert.is_false(accepted)
+    assert.are.equal(1, callbacks)
   end)
 
   it("rejects argument-only tool names in both backend authorization paths", function()
