@@ -410,7 +410,12 @@ function M:on_ready()
           local delivered = accepted and self:is_running()
           if delivered then
             if self.parent and self.parent.send then
-              local ok = next == "\r" and self.parent:submit() or self.parent:send(next)
+              local ok
+              if next == "\r" then
+                ok = self.parent:submit()
+              else
+                ok = self.parent:send(next)
+              end
               delivered = ok ~= false
             else
               vim.api.nvim_chan_send(self.job, next)

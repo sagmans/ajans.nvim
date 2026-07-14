@@ -109,6 +109,46 @@ describe("terminal", function()
     assert.are.same({}, terminal.send_queue)
   end)
 
+  it("delivers an accepted Enter exactly once through its mux parent", function()
+    local Terminal = require("ajans.cli.terminal")
+    local sends = 0
+    local submits = 0
+    vim.schedule = function(callback)
+      callback()
+    end
+    local terminal = setmetatable({
+      job = 42,
+      send_queue = { "\r" },
+      timer = {
+        start = function(_, _, _, callback)
+          callback()
+        end,
+      },
+      parent = {
+        send = function()
+          sends = sends + 1
+        end,
+        submit = function()
+          submits = submits + 1
+        end,
+        authorize_automated_input = function(_, callback)
+          callback(true)
+        end,
+      },
+      is_running = function()
+        return true
+      end,
+      is_focused = function()
+        return false
+      end,
+    }, Terminal)
+
+    terminal:on_ready()
+
+    assert.are.equal(1, submits)
+    assert.are.equal(0, sends)
+  end)
+
   it("authorizes a fresh tmux prompt only after resolving the target process", function()
     local Terminal = require("ajans.cli.terminal")
     local expected_process = true
