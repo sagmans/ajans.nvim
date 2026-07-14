@@ -14,7 +14,7 @@ require("lazy.minit").setup({
   spec = {
     {
       dir = vim.uv.cwd(),
-      opts = {},
+      opts = { cli = { mux = { backend = "tmux" } } },
     },
     { "nvim-treesitter/nvim-treesitter-textobjects", branch = "main" },
     { "folke/snacks.nvim" },
@@ -30,6 +30,31 @@ require("lazy.minit").setup({
     },
   },
 })
+
+-- Tests must never inspect or mutate the developer's live Herdr session.
+local Herdr = require("ajans.cli.session.herdr")
+Herdr._run = function(cmd)
+  if cmd[2] == "status" then
+    return {
+      code = 0,
+      stdout = '{"status":"not_running","running":false}\n',
+      stderr = "",
+    }
+  end
+  return {
+    code = 1,
+    stdout = "",
+    stderr = "failed to connect to Herdr server: test command execution is mocked\n",
+  }
+end
+Herdr._run_many = function(commands)
+  return vim.tbl_map(function(cmd)
+    return Herdr._run(cmd)
+  end, commands)
+end
+Herdr._spawn = function()
+  error("tests must stub Herdr._spawn before starting a live Herdr process")
+end
 
 -- TODO: check why this is needed
 vim.opt.rtp:append(vim.fn.stdpath("data") .. "/site")

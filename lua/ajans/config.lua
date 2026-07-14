@@ -12,8 +12,8 @@ local defaults = {
     win = {
       --- This is run when a new terminal is created, before starting it.
       --- Here you can change window options `terminal.opts`.
-      ---@param terminal ajans.cli.Terminal
-      config = function(terminal) end,
+      ---@param _terminal ajans.cli.Terminal
+      config = function(_terminal) end,
       wo = {}, ---@type vim.wo
       bo = {}, ---@type vim.bo
       layout = "right", ---@type "float"|"left"|"bottom"|"top"|"right"
@@ -58,13 +58,16 @@ local defaults = {
     },
     ---@class ajans.cli.Mux
     mux = {
-      -- terminal: tmux sessions will be attached inside a Neovim terminal
-      -- window: when run inside tmux, new sessions will be created in a new window
-      -- split: when run inside tmux, new sessions will be created in a new split
+      -- auto: prefer the usable multiplexer hosting Neovim, then a running Herdr server.
+      -- A sole installed Herdr is selected even when invalid so health can report why.
+      backend = "auto", ---@type "auto"|"tmux"|"herdr"
+      -- terminal: sessions will be attached inside a Neovim terminal
+      -- window: create a tmux window or Herdr tab when hosted by the backend
+      -- split: create a split when hosted by the backend
       create = "split", ---@type "terminal"|"window"|"split"
       split = {
         vertical = true, -- vertical or horizontal split
-        size = 0.5, -- size of the split (0-1 for percentage)
+        size = 0.5, -- fraction (<= 1), or cells (> 1); each backend validates supported bounds
       },
       -- max lines to capture when dumping a multiplexer pane for scrollback support
       -- more lines means slower loading of the scrollback
@@ -216,6 +219,7 @@ function M.setup(opts)
     require("ajans.status").setup()
 
     M.validate("cli.win.layout", { "float", "left", "bottom", "top", "right" })
+    M.validate("cli.mux.backend", { "auto", "tmux", "herdr" })
     M.validate("cli.mux.create", { "terminal", "window", "split" })
   end)
 end

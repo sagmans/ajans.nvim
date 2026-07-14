@@ -1,6 +1,6 @@
 # Architecture
 
-Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI model. It manages tmux sessions, a Neovim terminal wrapper, prompt/context rendering, picker integrations, and status reporting.
+Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI model. It manages tmux or Herdr sessions, a Neovim terminal wrapper, prompt/context rendering, picker integrations, and status reporting.
 
 ## Module map
 
@@ -11,13 +11,13 @@ Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI 
 | CLI API | `lua/ajans/cli/init.lua` | Public API: `select`, `show`, `toggle`, `focus`, `hide`, `close`, `send`, `prompt`, `render`. |
 | Tool registry | `lua/ajans/cli/tool.lua`, `aj/cli/*.lua` | Load default tool configs from runtime path and merge user overrides. |
 | State | `lua/ajans/cli/state.lua` | Combine installed tools, running sessions, attached sessions, and user filters. |
-| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua` | tmux-backed session discovery, start, attach, detach, send, submit, dump. |
+| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua`, `lua/ajans/cli/session/herdr.lua`, `lua/ajans/cli/session/herdr/*.lua` | Backend selection and lifecycle contracts; focused Herdr transport, discovery, and layout modules. |
 | Terminal wrapper | `lua/ajans/cli/terminal.lua`, `lua/ajans/cli/scrollback.lua` | Neovim terminal window/buffer lifecycle, keymaps, send queue, mode restore, scrollback. |
 | Context | `lua/ajans/cli/context/*.lua`, `lua/ajans/text.lua`, `lua/ajans/treesitter.lua` | Render prompt variables into strings with optional highlighting metadata. |
 | Pickers | `lua/ajans/cli/picker/*.lua`, `lua/ajans/cli/ui/*.lua` | Tool/prompt/file/buffer selection through `vim.ui.select`, snacks, Telescope, or fzf-lua. |
 | Watch | `lua/ajans/cli/watch.lua` | Watch loaded file directories and run `:checktime`. |
 | Status | `lua/ajans/status.lua` | Cache attached CLI sessions for statuslines. |
-| Health | `lua/ajans/health.lua` | Check Neovim version, `autoread`, tmux, process tools, and CLI executables. |
+| Health | `lua/ajans/health.lua` | Check Neovim, `autoread`, the selected backend/version/server, process tools when tmux needs them, and CLI executables. |
 | Docs | `lua/ajans/docs.lua`, `tests/fixtures/readme.lua` | Generate reference blocks for docs. |
 
 ## Startup flow
@@ -48,7 +48,7 @@ state layer selects/attaches a session
 tool formatter adapts text for target CLI
         │
         ▼
-tmux backend sends text to pane
+selected tmux or Herdr backend sends text to pane
 ```
 
 ## Tool loading
@@ -59,17 +59,19 @@ Bundled tool configs live in `aj/cli/`.
 
 ## Session model
 
-Ajans uses tmux for all CLI sessions.
+Ajans resolves one active backend during session setup. Explicit `tmux` or `herdr` configuration wins. Auto-selection considers the host environment, a running compatible Herdr server, and installed executables.
 
 - New sessions get stable names from tool name plus cwd hash.
-- Existing tmux panes are discovered with `tmux list-panes`.
-- Processes are inspected with `ps`, `/proc`, and `lsof` where available.
-- If Neovim is already inside tmux and `cli.mux.create` is `"window"` or `"split"`, Ajans can start an external tmux window/split instead of an embedded terminal.
-- Embedded terminal sessions attach to tmux and are tracked as `terminal: ...` sessions.
+- The tmux adapter discovers panes with `tmux list-panes` and inspects process trees with `ps`, `/proc`, and `lsof` where available.
+- The Herdr adapter takes an `api snapshot` on Herdr 0.7.2+ and composes the equivalent public list inventory on 0.7.0-0.7.1. Stable Ajans names and Herdr labels classify known tools first; bounded process inspection is reserved for unmatched custom tools. It keeps Herdr terminal, pane, tab, workspace, and available process identities.
+- Herdr control calls use bounded execution and decoded JSON errors. Sensitive launch and prompt payloads use Herdr's owner-only local newline-delimited JSON socket instead of process arguments; Ajans connects through the canonical path it validated. Ajans starts a persistent server with a strict system/runtime environment allowlist so project secrets do not persist, then sends the current process environment only with each agent launch. This intentionally means other consumers of an Ajans-started shared server do not inherit arbitrary variables. Workspace, tab, pane, and nested-layout changes use validated transactional cleanup.
+- If Neovim is hosted by the selected backend, `window` maps to a tmux window or Herdr tab and `split` maps to a native pane split.
+- Backend `start()` returns `(terminal_command, started)`: `started` is the authoritative creation outcome, while an optional command requests a Neovim terminal wrapper. Discovery returns `(sessions, authoritative)`, so transient scans retain known sessions and authoritative scans remove stale wrappers.
+- Embedded terminal sessions attach to the persistent backend resource and are tracked as `terminal: ...` wrappers. Stable backend identity removes duplicate parent/wrapper entries and reconciles server restarts. Automated input additionally pins the foreground process incarnation; detach or replacement invalidates delayed authorization before delivery.
 
 ## Terminal wrapper
 
-The wrapper is a Neovim terminal buffer/window that attaches to a tmux session.
+The wrapper is a Neovim terminal buffer/window that attaches to a tmux or Herdr session.
 
 It handles:
 
@@ -78,7 +80,7 @@ It handles:
 - terminal/normal mode restore
 - delayed send queue while the CLI initializes
 - cleanup on terminal close
-- optional tmux scrollback capture when entering normal mode or using mouse scroll
+- optional backend scrollback capture when entering normal mode or using mouse scroll
 
 ## Context renderer
 
@@ -97,11 +99,11 @@ Session attach/detach emits user autocmds:
 - `User AjansCliAttach`
 - `User AjansCliDetach`
 
-`lua/ajans/status.lua` listens to those events and exposes `require("ajans.status").cli()` for statusline integrations.
+`lua/ajans/status.lua` listens to those events and exposes `require("ajans.status").cli()` for statusline integrations. Periodic liveness refreshes are asynchronous, so statusline rendering only reads cached data.
 
 ## Boundaries
 
 - No hosted service dependency.
 - No bundled AI model.
-- No non-tmux session backend.
+- One selected local session backend at a time: tmux or Herdr.
 - No automatic whole-file context unless you add custom context.

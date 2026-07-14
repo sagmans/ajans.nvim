@@ -27,17 +27,26 @@ end
 
 describe("status", function()
   local original_attached
+  local original_snapshot
+  local original_async
+  local original_schedule
 
   before_each(function()
     original_attached = Session.attached
+    original_snapshot = Session.attached_snapshot
+    original_async = Session.attached_async
+    original_schedule = vim.schedule
   end)
 
   after_each(function()
     Session.attached = original_attached
+    Session.attached_snapshot = original_snapshot
+    Session.attached_async = original_async
+    vim.schedule = original_schedule
   end)
 
   it("returns no CLI sessions when none are attached", function()
-    Session.attached = function()
+    Session.attached_snapshot = function()
       return {}
     end
 
@@ -47,19 +56,24 @@ describe("status", function()
   end)
 
   it("returns attached CLI sessions with normalized fields", function()
-    Session.attached = function()
+    Session.attached_snapshot = function()
       return {
         claude = {
           id = "claude",
           tool = { name = "claude" },
           cwd = "/tmp/project",
           backend = "terminal",
+          mux_backend = "herdr",
+          mux_identity = "herdr:term-1",
           started = true,
         },
         opencode = {
           id = "opencode",
           tool = { name = "opencode" },
           cwd = "/tmp/other",
+          backend = "herdr",
+          external = true,
+          identity = "herdr:term-2",
           parent = { id = "parent" },
         },
       }
@@ -72,17 +86,55 @@ describe("status", function()
         id = "claude",
         tool = "claude",
         cwd = "/tmp/project",
+        backend = "herdr",
+        external = false,
+        terminal = true,
+        identity = "herdr:term-1",
       },
       {
         id = "opencode",
         tool = "opencode",
         cwd = "/tmp/other",
+        backend = "herdr",
+        external = true,
+        terminal = false,
+        identity = "herdr:term-2",
       },
     }, sorted_cli_status())
   end)
 
+  it("preserves external metadata on attached terminal wrappers", function()
+    Session.attached_snapshot = function()
+      return {
+        ["terminal: herdr:term-1"] = {
+          id = "terminal: herdr:term-1",
+          tool = { name = "claude" },
+          cwd = "/tmp/project",
+          backend = "terminal",
+          mux_backend = "herdr",
+          mux_identity = "herdr:term-1",
+          external = true,
+        },
+      }
+    end
+
+    Status.setup()
+
+    assert.are.same({
+      {
+        id = "terminal: herdr:term-1",
+        tool = "claude",
+        cwd = "/tmp/project",
+        backend = "herdr",
+        external = true,
+        terminal = true,
+        identity = "herdr:term-1",
+      },
+    }, Status.cli())
+  end)
+
   it("keeps partial CLI session data without failing", function()
-    Session.attached = function()
+    Session.attached_snapshot = function()
       return {
         missing = {
           cwd = "/tmp/missing",
@@ -110,7 +162,7 @@ describe("status", function()
 
   it("refreshes CLI cache when attach and detach events fire", function()
     local attached = {}
-    Session.attached = function()
+    Session.attached_snapshot = function()
       return attached
     end
 
@@ -140,25 +192,66 @@ describe("status", function()
     assert.are.same({}, Status.cli())
   end)
 
-  it("refreshes CLI cache after the periodic refresh interval", function()
-    local calls = 0
+  it("ignores delayed refreshes older than an attach event", function()
+    local attached = {}
+    Session.attached_snapshot = function()
+      return attached
+    end
+    local complete
+    Session.attached_async = function(callback)
+      complete = callback
+    end
+    Status.setup()
+    set_cli_last_update(vim.uv.now() - 5001)
+    local scheduled
+    vim.schedule = function(callback)
+      scheduled = callback
+    end
+
+    Status.cli()
+    scheduled()
+    attached = {
+      claude = { id = "claude", tool = { name = "claude" }, cwd = "/tmp/project" },
+    }
+    vim.api.nvim_exec_autocmds("User", { pattern = "AjansCliAttach" })
+    complete({})
+
+    assert.are.same({
+      { id = "claude", tool = "claude", cwd = "/tmp/project" },
+    }, Status.cli())
+  end)
+
+  it("refreshes the periodic cache without blocking statusline rendering", function()
+    Session.attached_snapshot = function()
+      return {}
+    end
     Session.attached = function()
-      calls = calls + 1
-      if calls == 1 then
-        return {}
-      end
-      return {
-        claude = {
-          id = "claude",
-          tool = { name = "claude" },
-          cwd = "/tmp/project",
-        },
-      }
+      error("status refresh must not call synchronous liveness")
+    end
+    local complete
+    Session.attached_async = function(callback)
+      complete = callback
     end
 
     Status.setup()
     set_cli_last_update(vim.uv.now() - 5001)
+    local scheduled
+    vim.schedule = function(callback)
+      scheduled = callback
+    end
 
+    assert.are.same({}, Status.cli())
+    assert.is_function(scheduled)
+    scheduled()
+    assert.are.same({}, Status.cli())
+    assert.is_function(complete)
+    complete({
+      claude = {
+        id = "claude",
+        tool = { name = "claude" },
+        cwd = "/tmp/project",
+      },
+    })
     assert.are.same({
       {
         id = "claude",

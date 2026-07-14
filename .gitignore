@@ -1,6 +1,7 @@
 *.log
 /.repro
 /.tests
+/.pi/tasks/
 /build
 /debug
 /doc/tags

@@ -21,6 +21,89 @@ local base = setmetatable({}, {
   end,
 })
 
+local INTERPRETERS = {
+  bash = true,
+  fish = true,
+  node = true,
+  perl = true,
+  python = true,
+  python3 = true,
+  ruby = true,
+  sh = true,
+  zsh = true,
+}
+
+---@param value string?
+---@return string
+local function basename(value)
+  return type(value) == "string" and value ~= "" and vim.fs.basename(value) or ""
+end
+
+---@param proc ajans.cli.ProcessMatch
+---@return string[], {start:integer,finish:integer}[]
+local function command_tokens(proc)
+  local command = proc.cmd or ""
+  local argv = {}
+  local spans = {}
+  local index = 1
+  while index <= #command do
+    while index <= #command and command:sub(index, index):match("%s") do
+      index = index + 1
+    end
+    if index > #command then
+      break
+    end
+    local start = index
+    local quote
+    local token = {}
+    while index <= #command do
+      local char = command:sub(index, index)
+      if quote then
+        if char == quote then
+          quote = nil
+        elseif char == "\\" and quote == '"' and index < #command then
+          index = index + 1
+          token[#token + 1] = command:sub(index, index)
+        else
+          token[#token + 1] = char
+        end
+      elseif char == '"' or char == "'" then
+        quote = char
+      elseif char:match("%s") then
+        break
+      elseif char == "\\" and index < #command then
+        index = index + 1
+        token[#token + 1] = command:sub(index, index)
+      else
+        token[#token + 1] = char
+      end
+      index = index + 1
+    end
+    argv[#argv + 1] = table.concat(token)
+    spans[#spans + 1] = { start = start - 1, finish = index - 1 }
+  end
+  return argv, spans
+end
+
+---@param self ajans.cli.Tool
+---@param proc ajans.cli.ProcessMatch
+---@return {start:integer,finish:integer}[]
+local function executable_spans(self, proc)
+  local argv, spans = command_tokens(proc)
+  local first = basename(argv[1] or proc.executable)
+  local runtime = basename(proc.runtime_executable)
+  local configured = basename(self.cmd and self.cmd[1])
+  if runtime ~= "" and runtime ~= first and not (INTERPRETERS[runtime] and first == configured) then
+    return {}
+  end
+  local allowed = spans[1] and { spans[1] } or {}
+  local interpreter = INTERPRETERS[runtime ~= "" and runtime or first]
+  if interpreter and spans[2] then
+    allowed[#allowed + 1] = spans[2]
+  end
+  return allowed
+end
+
 ---@param name string
 function M.get(name)
   local config =
@@ -33,14 +116,23 @@ function M.get(name)
   return self
 end
 
----@param proc ajans.cli.Proc
+---@param proc ajans.cli.ProcessMatch
 function M:is_proc(proc)
   local is_proc = self.config.is_proc
   if type(is_proc) == "string" then
     local ok, re = pcall(vim.regex, is_proc)
     if ok then
-      is_proc = function(_, p)
-        return re:match_str(p.cmd) ~= nil
+      is_proc = function(tool, p)
+        local start, finish = re:match_str(p.cmd or "")
+        if start == nil then
+          return false
+        end
+        for _, span in ipairs(executable_spans(tool, p)) do
+          if start >= span.start and start < span.finish and finish >= span.finish then
+            return true
+          end
+        end
+        return false
       end
     else
       is_proc = function()

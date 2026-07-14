@@ -73,15 +73,16 @@ function M.get(filter)
   local sessions = filter.attached and Session.attached() or Session.sessions()
 
   for _, s in pairs(sessions) do
-    -- if not attached, skip if another session with higher priority
-    -- is running with overlapping pids
+    -- Prefer a terminal wrapper for the same stable backend resource. Keep the
+    -- pid overlap fallback for tmux and local process discovery.
     local skip = false
-    if not s:is_attached() then
-      for _, s2 in pairs(sessions) do
-        if s2 ~= s and Util.overlaps(s2.pids or {}, s.pids or {}) and s2.priority > s.priority then
-          skip = true
-          break
-        end
+    local identity = s.mux_identity or s.identity
+    for _, s2 in pairs(sessions) do
+      local same_identity = identity ~= nil and identity == (s2.mux_identity or s2.identity)
+      local same_process = not s:is_attached() and Util.overlaps(s2.pids or {}, s.pids or {})
+      if s2 ~= s and (same_identity or same_process) and s2.priority > s.priority then
+        skip = true
+        break
       end
     end
 
@@ -150,7 +151,9 @@ function M.with(cb, opts)
       return
     end
     local ret, attached = M.attach(state, { show = opts.show, focus = opts.focus })
-    cb(ret, attached)
+    if ret and ret.attached then
+      cb(ret, attached)
+    end
   end)
 
   local filter_attached = Util.merge(opts.filter, { attached = true })
@@ -178,7 +181,7 @@ end
 ---@return ajans.cli.State state, boolean attached whether we just attached
 function M.attach(state, opts)
   opts = opts or {}
-  local attached = state.session == nil or not state.attached
+  local was_attached = state.session ~= nil and state.attached
   local tool = state.tool
 
   -- if the session is already attached, the below is a no-op
@@ -186,6 +189,7 @@ function M.attach(state, opts)
   session = Session.attach(session)
 
   state = M.get_state(session) -- update state
+  local attached = not was_attached and state.attached == true
   local terminal = state.terminal
   if terminal then
     if opts.show then

@@ -1,11 +1,27 @@
 local Config = require("ajans.config")
+local Procs = require("ajans.cli.procs")
 local Util = require("ajans.util")
 
+---@class ajans.tmux.TextOperation
+---@field kind "text"
+---@field text string
+
+---@class ajans.tmux.SubmitOperation
+---@field kind "submit"
+
+---@alias ajans.tmux.InputOperation ajans.tmux.TextOperation|ajans.tmux.SubmitOperation
+
 ---@class ajans.cli.muxer.Tmux: ajans.cli.Session
----@field tmux_pane_id string
----@field tmux_pid number
+---@field tmux_pane_id? string
+---@field tmux_pid? number
+---@field _input_queue? ajans.tmux.InputOperation[]
 local M = {}
 M.__index = M
+
+M.AUTHORIZATION_TIMEOUT = 500
+M._run_async = function(cmd, opts, callback)
+  vim.system(cmd, opts, callback)
+end
 
 local PANE_FORMAT =
   "#{session_id}:#{pane_id}:#{pane_pid}:#{session_name}:#{?pane_current_path,#{pane_current_path},#{pane_start_path}}"
@@ -27,7 +43,8 @@ function M:init()
   self.priority = self.external and 10 or 50
 end
 
----@return ajans.cli.terminal.Cmd?
+---@return ajans.cli.terminal.Cmd? cmd
+---@return boolean started
 function M:start()
   if not self.external then
     local cmd = { "tmux", "new", "-A", "-s", self.id }
@@ -35,7 +52,7 @@ function M:start()
     self:add_cmd(cmd)
     vim.list_extend(cmd, { ";", "set-option", "status", "off" })
     vim.list_extend(cmd, { ";", "set-option", "detach-on-destroy", "on" })
-    return { cmd = cmd }
+    return { cmd = cmd }, true
   elseif Config.cli.mux.create == "window" then
     local cmd = { "tmux", "new-window", "-dP", "-c", self.cwd, "-F", PANE_FORMAT }
     self:add_cmd(cmd)
@@ -50,6 +67,7 @@ function M:start()
     self:spawn(cmd)
     Util.info(("Started **%s** in a new tmux split"):format(self.tool.name))
   end
+  return nil, self.started == true
 end
 
 --- Execute the given tmux command and update the session info,
@@ -66,8 +84,132 @@ function M:spawn(cmd)
   end
 end
 
+function M:detach() end
+
 function M:is_running()
   return self.tmux_pid and vim.api.nvim_get_proc(self.tmux_pid) ~= nil
+end
+
+---@param pane_id string
+---@return string[]
+local function display_command(pane_id)
+  return {
+    "tmux",
+    "display-message",
+    "-p",
+    "-t",
+    pane_id,
+    "#{pane_pid}:#{pane_current_command}",
+  }
+end
+
+---@param self ajans.cli.muxer.Tmux
+---@param line string?
+---@param procs ajans.cli.Procs
+---@return boolean
+local function accepts_process(self, line, procs)
+  local pane_pid, current
+  if line then
+    pane_pid, current = line:match("^(%d+):(.*)$")
+  end
+  if tonumber(pane_pid) ~= self.tmux_pid or not current or current == "" then
+    return false
+  end
+  local matched_pid
+  local matched_process
+  procs:walk(self.tmux_pid, function(proc)
+    local foreground = not proc.pgid or not proc.tpgid or proc.pgid == proc.tpgid
+    if foreground and self.tool:is_proc(proc) and proc.cmd:find(current, 1, true) then
+      local identity = Procs.identity(proc)
+      if self._authorized_process and Procs.same_identity(self._authorized_process, identity) then
+        matched_pid = proc.pid
+        matched_process = identity
+        return true
+      end
+      if self._authorized_pid == proc.pid and not self._authorized_process then
+        matched_pid = proc.pid
+        matched_process = identity
+        return true
+      end
+      if not self._authorized_pid then
+        matched_pid = matched_pid or proc.pid
+        matched_process = matched_process or identity
+      end
+    end
+  end)
+  if self._authorized_pid and matched_pid ~= self._authorized_pid then
+    return false
+  end
+  self._authorized_pid = matched_pid
+  self._authorized_process = matched_process
+  return matched_pid ~= nil
+end
+
+function M:accepts_automated_input()
+  if not self.tmux_pid or type(self.tool.is_proc) ~= "function" then
+    return false
+  end
+  local pane_id = self:pane_id()
+  local lines = pane_id
+    and Util.exec(display_command(pane_id), {
+      notify = false,
+      timeout = M.AUTHORIZATION_TIMEOUT,
+    })
+  return accepts_process(self, lines and lines[1], Procs.new({ timeout = M.AUTHORIZATION_TIMEOUT }))
+end
+
+---@param callback fun(accepted:boolean)
+function M:authorize_automated_input(callback)
+  if not self.tmux_pid or type(self.tool.is_proc) ~= "function" then
+    callback(false)
+    return
+  end
+  local pane_id = self:pane_id()
+  if not pane_id then
+    callback(false)
+    return
+  end
+  local finished = false
+  local display_result
+  local process_result
+  local ps = Procs.ps_command()
+  local pending = ps and 2 or 1
+  local function finish(value)
+    if finished then
+      return
+    end
+    finished = true
+    callback(value)
+  end
+  local function complete()
+    pending = pending - 1
+    if pending > 0 or finished then
+      return
+    end
+    local line = display_result and display_result.code == 0 and vim.trim(display_result.stdout or "") or nil
+    local procs = process_result and process_result.code == 0 and Procs.from_ps_output(process_result.stdout or "")
+      or Procs.new({ force_proc = true, timeout = M.AUTHORIZATION_TIMEOUT })
+    finish(accepts_process(self, line, procs))
+  end
+  local function run(cmd, assign)
+    local ok = pcall(M._run_async, cmd, { text = true, timeout = M.AUTHORIZATION_TIMEOUT }, function(result)
+      vim.schedule(function()
+        assign(result)
+        complete()
+      end)
+    end)
+    if not ok then
+      finish(false)
+    end
+  end
+  run(display_command(pane_id), function(result)
+    display_result = result
+  end)
+  if ps then
+    run(ps, function(result)
+      process_result = result
+    end)
+  end
 end
 
 ---@param ret string[]
@@ -83,12 +225,14 @@ function M:add_cmd(ret)
 end
 
 ---@param opts? { cmd?:string[], notify?:boolean }
+---@return ajans.tmux.Pane[], boolean
 function M.panes(opts)
   opts = opts or {}
   -- List all panes in current session with their command and cwd
   local cmd = opts.cmd or { "tmux", "list-panes", "-a", "-F", PANE_FORMAT }
   local lines = Util.exec(cmd, { notify = opts.notify == true })
   local panes = {} ---@type ajans.tmux.Pane[]
+  local complete = lines ~= nil
   for _, line in ipairs(lines or {}) do
     local session_id, id, pid, session_name, cwd = line:match("^(%$%d+):(%%%d+):(%d+):(.-):(.*)$")
     if id and pid and session_name and cwd then
@@ -102,33 +246,38 @@ function M.panes(opts)
         session_id = session_id,
         cwd = cwd,
       }
+    else
+      complete = false
     end
   end
-  return panes
+  return panes, complete
 end
 
+---@return table<string,integer[]>, boolean
 function M.clients()
   local lines = Util.exec({ "tmux", "list-clients", "-F", "#{session_id}:#{client_pid}" }, { notify = false })
-  local ret = {} ---@type table<string, integer>[]
+  local ret = {} ---@type table<string,integer[]>
+  local complete = lines ~= nil
   for _, line in ipairs(lines or {}) do
     local session_id, pid = line:match("^(%$%d+):(%d+)$")
     if session_id and pid then
       pid = assert(tonumber(pid), "invalid tmux client_pid: " .. pid) --[[@as number]]
       ret[session_id] = ret[session_id] or {}
       table.insert(ret[session_id], pid)
+    else
+      complete = false
     end
   end
-  return ret
+  return ret, complete
 end
 
 function M.sessions()
-  local panes = M.panes()
+  local panes, panes_complete = M.panes()
   local ret = {} ---@type ajans.cli.session.State[]
   local tools = Config.tools()
 
-  local clients = M.clients()
+  local clients, clients_complete = M.clients()
 
-  local Procs = require("ajans.cli.procs")
   local procs = Procs.new()
   for _, pane in ipairs(panes) do
     procs:walk(pane.pid, function(proc)
@@ -151,7 +300,8 @@ function M.sessions()
     end)
   end
 
-  return ret
+  local procs_complete = not procs.is_complete or procs:is_complete()
+  return ret, panes_complete ~= false and clients_complete ~= false and procs_complete
 end
 
 function M:pane_id()
@@ -164,44 +314,79 @@ function M:pane_id()
   return self.tmux_pane_id
 end
 
----Send text to a tmux pane
-function M:send(text)
-  self._send_queue = self._send_queue or {}
-  self._send_queue[#self._send_queue + 1] = text
+function M:_drain_input()
   if self._sending then
     return
   end
+  self._input_queue = self._input_queue or {}
+  local item = table.remove(self._input_queue, 1) ---@type ajans.tmux.InputOperation?
+  if not item then
+    return
+  end
+  local pane_id = self:pane_id()
+  if not pane_id or (self._authorized_pid and not self:accepts_automated_input()) then
+    self._last_send_ok = false
+    self._input_queue = {}
+    return
+  end
+  self._sending = true
 
-  local function drain()
-    local next = table.remove(self._send_queue, 1)
-    if not next then
-      self._sending = false
+  local function complete(ok)
+    if ok and item.kind == "text" then
+      self._last_send_ok = true
+    elseif not ok then
+      self._last_send_ok = false
+      self._input_queue = {}
+    end
+    self._sending = false
+    self:_drain_input()
+  end
+  if item.kind == "submit" then
+    if self._last_send_ok == false then
+      self._last_send_ok = nil
+      complete(false)
       return
     end
-    self._sending = true
-
-    local function send()
-      local buffer = "ajans-" .. self.tmux_pane_id
-      Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = next })
-      Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", self.tmux_pane_id })
-      drain()
-    end
-
-    if self.tool.mux_focus then
-      -- Send focus-in event first (some TUI apps like qwen ignore input when unfocused)
-      Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Escape", "[", "I" })
-      vim.defer_fn(send, 50) -- slight delay to ensure focus event is processed first
-    else
-      send()
-    end
+    self._last_send_ok = nil
+    complete(Util.exec({ "tmux", "send-keys", "-t", pane_id, "Enter" }) ~= nil)
+    return
   end
 
-  drain()
+  local function send_text()
+    if self._authorized_pid and not self:accepts_automated_input() then
+      complete(false)
+      return
+    end
+    local buffer = "ajans-" .. pane_id
+    if Util.exec({ "tmux", "load-buffer", "-b", buffer, "-" }, { stdin = item.text }) == nil then
+      complete(false)
+      return
+    end
+    complete(Util.exec({ "tmux", "paste-buffer", "-b", buffer, "-d", "-r", "-t", pane_id }) ~= nil)
+  end
+  if self.tool.mux_focus then
+    if Util.exec({ "tmux", "send-keys", "-t", pane_id, "Escape", "[", "I" }) == nil then
+      complete(false)
+      return
+    end
+    vim.defer_fn(send_text, 50)
+  else
+    send_text()
+  end
 end
 
 ---Send text to a tmux pane
+function M:send(text)
+  self._input_queue = self._input_queue or {}
+  self._input_queue[#self._input_queue + 1] = { kind = "text", text = text }
+  self:_drain_input()
+end
+
+---Submit after all queued text reaches the tmux pane.
 function M:submit()
-  Util.exec({ "tmux", "send-keys", "-t", self.tmux_pane_id, "Enter" })
+  self._input_queue = self._input_queue or {}
+  self._input_queue[#self._input_queue + 1] = { kind = "submit" }
+  self:_drain_input()
 end
 
 function M:dump()

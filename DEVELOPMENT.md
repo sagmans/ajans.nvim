@@ -10,7 +10,7 @@ Contributor notes for ajans.nvim.
 | `lua/ajans/commands.lua` | `:Ajans` command parser. |
 | `lua/ajans/cli/init.lua` | Public CLI Lua API. |
 | `lua/ajans/cli/actions.lua` | Built-in CLI terminal action handlers used by keymaps. |
-| `lua/ajans/cli/session/` | tmux-backed sessions. |
+| `lua/ajans/cli/session/` | Backend selection and tmux/Herdr session adapters. |
 | `lua/ajans/cli/terminal.lua` | Neovim terminal wrapper. |
 | `lua/ajans/cli/context/` | Prompt context providers. |
 | `lua/ajans/cli/picker/` | snacks, Telescope, fzf-lua picker adapters. |
@@ -52,6 +52,10 @@ Do not edit generated blocks directly. Update source, then run `./scripts/docs`.
 | `api_cli` | `USAGE.md` | `lua/ajans/cli/init.lua` and `lua/ajans/commands.lua` |
 | `snacks_picker` | `USAGE.md` | `tests/fixtures/readme.lua` |
 | `setup_lualine` | `USAGE.md` | `tests/fixtures/readme.lua` |
+
+## Session backend contract
+
+Both backend adapters implement `start`, `attach`, `detach`, `sessions`, `send`, `submit`, `dump`, and `is_running`. Add behavior to the table-driven contract in `tests/mux_parity_spec.lua` when this interface changes. Herdr command tests must mock `_run`/`_run_many`; the ordinary test harness must not inspect or mutate a developer's live Herdr server. Real lifecycle harnesses are intentionally deferred to [Herdr issue #11](https://github.com/sagmans/ajans.nvim/issues/11) and [tmux issue #10](https://github.com/sagmans/ajans.nvim/issues/10); those harnesses must use isolated temporary namespaces and recorded-ID cleanup only.
 
 ## Adding a CLI tool
 

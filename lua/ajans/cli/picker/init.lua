@@ -4,16 +4,8 @@ local Util = require("ajans.util")
 local M = {}
 
 ---@class ajans.Picker
-local P = {}
-
----@param source string
----@param cb fun(items:ajans.context.Loc[])
----@param opts? table
-function P.open(source, cb, opts) end
-
----@param cb fun(items:ajans.context.Loc[])
----@return fun()
-function P.action(cb) end
+---@field open fun(source:string, cb:fun(items:ajans.context.Loc[]), opts?:table)
+---@field action fun(cb:fun(items:ajans.context.Loc[])):fun()
 
 ---@param picker? string
 function M.get(picker)

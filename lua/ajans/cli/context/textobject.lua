@@ -1,5 +1,7 @@
 local M = {}
 
+---@alias ajans.textobject.Range6 [integer, integer, integer, integer, integer, integer]
+
 ---@class ajans.textobject.Opts
 ---@field type "function"|"class"|"block"|"parameter"|"comment"|"call"|"conditional"|"loop"|"assignment"|"return"|"number"
 ---@field kind? "position"|"code" position: returns location, code: returns highlighted code (default: "position")
@@ -17,7 +19,7 @@ end
 ---@param col integer (1-based)
 ---@param textobject string e.g. "function", "class", "block"
 ---@param inner boolean
----@return Range6?
+---@return ajans.textobject.Range6?
 local function get_textobject_range(buf, row, col, textobject, inner)
   if not has_textobjects() then
     return nil
@@ -126,7 +128,7 @@ function M.get(ctx, opts)
 
   -- Range6 format: [start_row, start_col, start_byte, end_row, end_col, end_byte]
   -- All values are 0-based
-  local start_row, start_col, _, end_row, end_col, _ = unpack(range)
+  local start_row, start_col, _, end_row = unpack(range)
 
   -- If kind is "position", return location info with node name
   if opts.kind == "position" then

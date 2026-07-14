@@ -1,3 +1,5 @@
+local Client = require("ajans.cli.session.herdr.client")
+
 local M = {}
 
 local start = vim.health.start or vim.health.report_start
@@ -22,18 +24,59 @@ function M.check()
     warn("autoread is disabled, file changes from AI CLI tools will not be detected automatically")
   end
 
-  if vim.fn.executable("tmux") == 1 then
-    ok("Terminal multiplexer `tmux` is installed")
+  local backend = require("ajans.cli.session").selected_backend()
+  if backend == "herdr" then
+    local Herdr = require("ajans.cli.session.herdr")
+    local valid, message, version = Herdr.validate()
+    if valid then
+      ok(("Selected terminal multiplexer `herdr` %s is available"):format(version or "unknown"))
+      local status, status_err = Herdr.server_status()
+      if not status then
+        error("Unable to query the selected Herdr server: " .. (status_err or "unknown error"))
+      elseif status.running and status.compatible == false then
+        error(
+          "The running Herdr server is incompatible with the installed client; restart the Herdr server. "
+            .. Herdr.RESTART_WARNING
+        )
+      elseif status.running then
+        if status.restart_needed == true then
+          warn(
+            "The running Herdr server uses a different compatible version; restart when convenient. "
+              .. Herdr.RESTART_WARNING
+          )
+        end
+        local socket, socket_err = Client.trusted_socket(status)
+        if socket then
+          ok("The selected Herdr server is running with a trusted local API socket")
+        else
+          error("The selected Herdr server API socket is unusable: " .. (socket_err or "unknown error"))
+        end
+      else
+        ok("The selected Herdr server is stopped and will start when Ajans creates a session")
+      end
+    else
+      error(message or "Selected terminal multiplexer `herdr` is unavailable")
+    end
+  elseif vim.fn.executable("tmux") == 1 then
+    ok("Selected terminal multiplexer `tmux` is installed")
   else
-    error("Terminal multiplexer `tmux` is not installed")
+    error("Selected terminal multiplexer `tmux` is not installed")
   end
 
-  if vim.fn.has("win32") == 0 then
-    for _, c in ipairs({ "ps", "lsof" }) do
-      if vim.fn.executable(c) == 1 then
-        ok("`" .. c .. "` is installed")
+  if backend == "tmux" and vim.fn.has("win32") == 0 then
+    local linux = vim.fn.has("linux") == 1
+    if vim.fn.executable("ps") == 1 then
+      ok("`ps` is installed")
+    elseif linux then
+      ok("`ps` is not installed; using `/proc` for process discovery")
+    else
+      warn("`ps` is not installed; tmux process discovery is unavailable")
+    end
+    if not linux then
+      if vim.fn.executable("lsof") == 1 then
+        ok("`lsof` is installed")
       else
-        warn("`" .. c .. "` is not installed, running processes and ports will not be detected")
+        warn("`lsof` is not installed; tmux working-directory detection is unavailable")
       end
     end
   end

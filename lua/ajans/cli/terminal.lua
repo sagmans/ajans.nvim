@@ -7,6 +7,13 @@ local Util = require("ajans.util")
 ---@field cmd string[] Command to run the CLI tool
 ---@field env? table<string, string> Environment variables to set when running the command
 
+---@class ajans.cli.terminal.Opts: ajans.cli.session.CreateOpts
+---@field mux_backend string
+
+---@class ajans.cli.terminal.TmuxParent: ajans.cli.Session
+---@field tmux_pid? integer
+---@field pane_id fun(self:ajans.cli.terminal.TmuxParent):string?
+
 ---@class ajans.cli.Terminal: ajans.cli.Session
 ---@field opts ajans.win.Opts
 ---@field group integer
@@ -20,6 +27,7 @@ local Util = require("ajans.util")
 ---@field win? integer
 ---@field scrollback? ajans.cli.Scrollback
 ---@field normal_mode? boolean
+---@field fresh? boolean created for a backend session that was not previously running
 local M = {}
 M.__index = M
 M.priority = 100
@@ -29,6 +37,8 @@ local READY_MAX_WAIT = 5000 -- ms
 local READY_CHECK_INTERVAL = 100 -- ms
 local READY_INIT_DELAY = 500 -- ms
 local READY_INIT_LINES = 5
+local TARGET_MAX_WAIT = 1000 -- ms
+local TARGET_CHECK_INTERVAL = 50 -- ms
 local SEND_DELAY = 100 --ms
 local TERM_CLOSE_ERROR_DELAY = 3000 -- ms if the terminal errored, don't close the window
 local TERM_CLOSE_DELAY = 500 -- ms if the terminal closed too quickly, don't close the window
@@ -95,10 +105,10 @@ function M.sessions()
   return vim.tbl_values(M.terminals)
 end
 
----@param opts ajans.cli.session.Opts
+---@param opts ajans.cli.terminal.Opts
 function M.new(opts)
   assert(type(opts) == "table", "terminal sessions require opts")
-  assert(opts.mux_backend == "tmux", "terminal sessions require tmux")
+  assert(opts.mux_backend and Session.backends[opts.mux_backend], "terminal sessions require a registered mux backend")
   local tool = opts.tool
 
   tool = type(tool) == "string" and Config.get_tool(tool) or tool --[[@as ajans.cli.Tool]]
@@ -136,6 +146,59 @@ function M:is_running()
   return self.job and vim.fn.jobwait({ self.job }, 0)[1] == -1
 end
 
+function M:accepts_automated_input()
+  if self.parent and self.parent.accepts_automated_input then
+    return self.parent:accepts_automated_input()
+  end
+  return self:is_running()
+end
+
+---@param callback fun(accepted:boolean)
+function M:authorize_automated_input(callback)
+  local function complete(accepted)
+    callback(accepted == true and not self.closed)
+  end
+  local parent = self.parent
+  local fresh_tmux = self.fresh and parent and parent.backend == "tmux"
+  if not fresh_tmux then
+    if parent and parent.authorize_automated_input then
+      parent:authorize_automated_input(complete)
+    else
+      complete(self:accepts_automated_input())
+    end
+    return
+  end
+  ---@cast parent ajans.cli.terminal.TmuxParent
+  if parent.tmux_pid then
+    parent:authorize_automated_input(complete)
+    return
+  end
+  local deadline = vim.uv.now() + TARGET_MAX_WAIT
+  local function check()
+    if self.closed or not self:is_running() then
+      self.fresh = false
+      complete(false)
+      return
+    end
+    local resolved = pcall(parent.pane_id, parent)
+    if not resolved then
+      self.fresh = false
+      complete(false)
+      return
+    end
+    if parent.tmux_pid and parent:accepts_automated_input() then
+      self.fresh = false
+      complete(true)
+    elseif vim.uv.now() >= deadline then
+      self.fresh = false
+      complete(false)
+    else
+      vim.defer_fn(check, TARGET_CHECK_INTERVAL)
+    end
+  end
+  check()
+end
+
 function M:buf_valid()
   return self.buf and vim.api.nvim_buf_is_valid(self.buf)
 end
@@ -160,7 +223,7 @@ function M:wo(opts)
 end
 
 function M:start()
-  if self:is_running() then
+  if self.closed or self:is_running() then
     return
   end
 
@@ -348,18 +411,67 @@ function M:on_ready()
     return
   end
   self.timer:start(0, SEND_DELAY, function()
+    if self._sending then
+      return
+    end
     local next = table.remove(self.send_queue, 1) ---@type string?
-    if next then
-      next = next:gsub("\r\n", "\n") -- normalize line endings
-      vim.schedule(function()
-        if self:is_running() then
-          vim.api.nvim_chan_send(self.job, next)
-          if self:is_focused() then
-            vim.cmd.startinsert()
+    if not next then
+      return
+    end
+    self._sending = true
+    next = next:gsub("\r\n", "\n") -- normalize line endings
+    local finished = false
+    local function finish(delivered, delivery_error)
+      if finished then
+        return
+      end
+      finished = true
+      if not delivered then
+        self.send_queue = {}
+      end
+      -- Release the queue before reporting because notification hooks may fail.
+      self._sending = false
+      if delivery_error then
+        Util.error("Failed to deliver terminal input: " .. tostring(delivery_error))
+      end
+    end
+    local function deliver(accepted)
+      local ok, delivered = pcall(function()
+        local sent = accepted and not self.closed and self:is_running()
+        if sent then
+          if self.parent and self.parent.send then
+            local result
+            if next == "\r" then
+              result = self.parent:submit()
+            else
+              result = self.parent:send(next)
+            end
+            sent = result ~= false
+          else
+            vim.api.nvim_chan_send(self.job, next)
           end
         end
+        if sent and self:is_focused() then
+          vim.cmd.startinsert()
+        end
+        return sent
       end)
+      if ok then
+        finish(delivered == true)
+      else
+        finish(false, delivered)
+      end
     end
+    vim.schedule(function()
+      local ok, authorization_error = pcall(self.authorize_automated_input, self, function(accepted)
+        vim.schedule(function()
+          deliver(accepted)
+        end)
+      end)
+      if not ok then
+        finish(false, authorization_error)
+      end
+    end)
   end)
 end
 
@@ -427,6 +539,9 @@ function M:is_focused()
 end
 
 function M:show()
+  if self.closed then
+    return
+  end
   self:start()
   if not self:is_running() then
     return
@@ -459,7 +574,7 @@ function M:hide()
 end
 
 function M:detach()
-  return self
+  return self:close()
 end
 
 function M:close()
@@ -506,6 +621,9 @@ end
 
 ---@param input string
 function M:send(input)
+  if self.closed then
+    return false
+  end
   self:show()
   if not self:is_running() then
     return
@@ -514,7 +632,7 @@ function M:send(input)
 end
 
 function M:submit()
-  if not self:is_running() then
+  if self.closed or not self:is_running() then
     return
   end
   self:send("\r") -- Updated to use the send method

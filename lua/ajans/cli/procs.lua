@@ -95,61 +95,253 @@ end
 
 local proc_fields = { env = M.env, cwd = M.cwd }
 
----@class ajans.cli.Proc
----@field pid number
----@field ppid number
+---@param value string
+---@return integer?, integer?, integer?, integer?, string?
+function M.parse_proc_stat(value)
+  local pid, fields = value:match("^(%d+) %(.+%) (.+)$")
+  if not pid or not fields then
+    return
+  end
+  local values = vim.split(fields, "%s+", { trimempty = true })
+  return tonumber(pid), tonumber(values[2]), tonumber(values[3]), tonumber(values[6]), values[20]
+end
+
+---@param path string
+---@return string?
+local function read_file(path)
+  local file = io.open(path, "rb")
+  if not file then
+    return
+  end
+  local value = file:read("*all")
+  file:close()
+  return value
+end
+
+M._fs_dir = vim.fs.dir
+M._read_file = read_file
+M._fs_readlink = vim.uv.fs_readlink
+
+---@class ajans.cli.ProcessMatch
 ---@field cmd string
+---@field pid? number
+---@field ppid? number
+---@field argv? string[]
+---@field executable? string
+---@field runtime_executable? string
+---@field start_time? string
+---@field pgid? number
+---@field tpgid? number
 ---@field env? table<string, string>
 ---@field cwd? string
+
+---@class ajans.cli.Proc: ajans.cli.ProcessMatch
+---@field pid number
+---@field ppid number
+
+---@class ajans.cli.ProcessIdentity
+---@field pid number
+---@field start_time? string
+---@field runtime_executable? string
 
 ---@class ajans.cli.Procs
 ---@field _procs table<number,ajans.cli.Proc>
 ---@field _children table<number, number[]>
+---@field _complete boolean
 local P = {}
 P.__index = P
 
-function P.new()
-  local self = setmetatable({}, P)
-  self._procs = {}
-  self._children = {}
-  self:update()
-  return self
+---@param self ajans.cli.Procs
+---@param pid integer
+---@param ppid integer
+---@param args string
+---@param metadata? {pgid?:number,tpgid?:number,start_time?:string,runtime_executable?:string}
+local function add_proc(self, pid, ppid, args, metadata)
+  metadata = metadata or {}
+  local executable = args:match('^%s*"([^"]+)"') or args:match("^%s*'([^']+)'") or args:match("^%s*(%S+)")
+  self._procs[pid] = setmetatable({
+    pid = pid,
+    ppid = ppid,
+    cmd = args,
+    executable = executable,
+    runtime_executable = metadata.runtime_executable,
+    start_time = metadata.start_time,
+    pgid = metadata.pgid,
+    tpgid = metadata.tpgid,
+  }, {
+    __index = function(t, key)
+      local field = proc_fields[key]
+      if field then
+        local value = field(t.pid) or false
+        rawset(t, key, value)
+        return value
+      end
+    end,
+  })
+  self._children[ppid] = self._children[ppid] or {}
+  table.insert(self._children[ppid], pid)
 end
 
-function P:update()
-  self._procs = {}
-  self._children = {}
+---@param self ajans.cli.Procs
+---@param opts? {proc_root?:string}
+---@return boolean
+local function update_from_proc(self, opts)
+  local root = opts and opts.proc_root or "/proc"
+  local ok, entries = pcall(M._fs_dir, root)
+  if not ok or not entries then
+    return false
+  end
+  local found = false
+  local complete = true
+  for name, kind in entries do
+    if kind == "directory" and name:match("^%d+$") then
+      local stat = M._read_file(root .. "/" .. name .. "/stat")
+      local pid, ppid, pgid, tpgid, start_time
+      if stat then
+        pid, ppid, pgid, tpgid, start_time = M.parse_proc_stat(stat)
+      end
+      if pid and ppid then
+        local args = (M._read_file(root .. "/" .. name .. "/cmdline") or ""):gsub("%z", " "):gsub("%s+$", "")
+        if args == "" then
+          args = (M._read_file(root .. "/" .. name .. "/comm") or ""):gsub("%s+$", "")
+        end
+        if args == "" then
+          complete = false
+        else
+          add_proc(self, pid, ppid, args, {
+            pgid = pgid,
+            tpgid = tpgid,
+            start_time = start_time,
+            runtime_executable = M._fs_readlink(root .. "/" .. name .. "/exe"),
+          })
+          found = true
+        end
+      else
+        complete = false
+      end
+    end
+  end
+  return found and complete
+end
+
+---@param self ajans.cli.Procs
+---@param lines string[]
+local function update_from_ps(self, lines)
+  local complete = true
+  for _, line in ipairs(vim.list_slice(lines, 2)) do -- skip header
+    local pid, ppid, pgid, tpgid, start_time, runtime_executable, args =
+      line:match("^%s*(%d+)%s+(%d+)%s+([%-]?%d+)%s+([%-]?%d+)%s+(%S+%s+%S+%s+%S+%s+%S+%s+%S+)%s+(%S+)%s+(.*)$")
+    if pid and ppid and args then
+      add_proc(self, assert(tonumber(pid)), assert(tonumber(ppid)), args, {
+        pgid = tonumber(pgid),
+        tpgid = tonumber(tpgid),
+        start_time = start_time,
+        runtime_executable = runtime_executable,
+      })
+    else
+      pid, ppid, args = line:match("^%s*(%d+)%s+(%d+)%s+(.*)$")
+      if pid and ppid and args then
+        add_proc(self, assert(tonumber(pid)), assert(tonumber(ppid)), args)
+      elseif line ~= "" then
+        complete = false
+      end
+    end
+  end
+  self._complete = complete
+end
+
+---@return string[]?
+function M.ps_command()
   if not have_ps then
     return
   end
-
   local cmd = { "ps" }
   if (vim.env.USER or "") ~= "" then
     vim.list_extend(cmd, { "-u", vim.env.USER or "" })
   end
-  vim.list_extend(cmd, { "-ww", "-o", "pid,ppid,args" })
-  local lines = Util.exec(cmd)
-  lines = vim.list_slice(lines or {}, 2) -- skip header
+  vim.list_extend(cmd, { "-ww", "-o", "pid,ppid,pgid,tpgid,lstart,comm,args" })
+  return cmd
+end
 
-  for _, line in ipairs(lines or {}) do
-    local pid, ppid, args = line:match("^%s*(%d+)%s+(%d+)%s+(.*)$")
-    if pid and ppid and args then
-      pid = assert(tonumber(pid), "invalid pid: " .. pid) --[[@as number]]
-      ppid = assert(tonumber(ppid), "invalid ppid: " .. ppid) --[[@as number]]
-      self._procs[pid] = setmetatable({ pid = pid, ppid = ppid, cmd = args }, {
-        __index = function(t, k)
-          local f = proc_fields[k]
-          if f then
-            local v = f(t.pid) or false
-            rawset(t, k, v)
-            return v
-          end
-        end,
-      })
-      self._children[ppid] = self._children[ppid] or {}
-      table.insert(self._children[ppid], pid)
+---@param stdout string
+---@return ajans.cli.Procs
+function M.from_ps_output(stdout)
+  local self = setmetatable({ _procs = {}, _children = {}, _complete = false }, P)
+  update_from_ps(self, vim.split(stdout, "\n", { plain = true, trimempty = true }))
+  return self
+end
+
+---@param opts? { force_proc?:boolean, timeout?:integer, proc_root?:string }
+function P.new(opts)
+  local self = setmetatable({}, P)
+  self._procs = {}
+  self._children = {}
+  self:update(opts)
+  return self
+end
+
+---@param opts? { force_proc?:boolean, timeout?:integer, proc_root?:string }
+function P:update(opts)
+  self._procs = {}
+  self._children = {}
+  self._complete = false
+  if have_ps and not (opts and opts.force_proc) then
+    local cmd = M.ps_command()
+    local lines = cmd and Util.exec(cmd, { timeout = opts and opts.timeout, notify = false })
+    if lines then
+      update_from_ps(self, lines)
+      if self._complete or not have_proc then
+        return
+      end
+      self._procs = {}
+      self._children = {}
     end
   end
+  if have_proc or (opts and opts.proc_root) then
+    self._complete = update_from_proc(self, opts)
+  end
+end
+
+---@return boolean
+function P:is_complete()
+  return self._complete
+end
+
+---@param proc ajans.cli.Proc
+---@return ajans.cli.ProcessIdentity
+function M.identity(proc)
+  return {
+    pid = proc.pid,
+    start_time = proc.start_time,
+    runtime_executable = proc.runtime_executable,
+  }
+end
+
+---@param expected ajans.cli.ProcessIdentity?
+---@param actual ajans.cli.ProcessIdentity?
+---@return boolean
+function M.same_identity(expected, actual)
+  if not expected or not actual or expected.pid ~= actual.pid then
+    return false
+  end
+  if expected.start_time and actual.start_time and expected.start_time ~= actual.start_time then
+    return false
+  end
+  if expected.runtime_executable and actual.runtime_executable then
+    if vim.fs.basename(expected.runtime_executable) ~= vim.fs.basename(actual.runtime_executable) then
+      return false
+    end
+    local expected_path = expected.runtime_executable:find("/", 1, true)
+    local actual_path = actual.runtime_executable:find("/", 1, true)
+    if
+      expected_path
+      and actual_path
+      and vim.fs.normalize(expected.runtime_executable) ~= vim.fs.normalize(actual.runtime_executable)
+    then
+      return false
+    end
+  end
+  return true
 end
 
 ---@param pid number
