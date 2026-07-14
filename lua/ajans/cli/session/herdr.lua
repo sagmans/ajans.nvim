@@ -2,6 +2,7 @@ local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
 local Discovery = require("ajans.cli.session.herdr.discovery")
 local Layout = require("ajans.cli.session.herdr.layout")
+local Procs = require("ajans.cli.procs")
 local Util = require("ajans.util")
 
 ---@class ajans.cli.muxer.Herdr: ajans.cli.Session
@@ -25,6 +26,8 @@ M.DISCOVERY_TIMEOUT = 5000
 M.PROCESS_INFO_CONCURRENCY = 8
 M.MAX_DUMP_LINES = 1000
 M.SEND_CHUNK_BYTES = 24 * 1024
+M.RESTART_WARNING =
+  "Restarting stops active pane processes; save work first or use Herdr's supported live handoff: https://herdr.dev/docs/session-state/"
 
 local AGENT_PREFIX = "ajans:"
 
@@ -167,9 +170,10 @@ function M.validate()
   end
   if not M.version_at_least(parsed) then
     return false,
-      ("Herdr backend requires `herdr` >= %s (found %s); upgrade Herdr and restart its server"):format(
+      ("Herdr backend requires `herdr` >= %s (found %s); upgrade Herdr and restart its server. %s"):format(
         M.MIN_VERSION_STRING,
-        version
+        version,
+        M.RESTART_WARNING
       )
   end
   return true, nil, version
@@ -336,10 +340,11 @@ end
 ---@return string?
 local function server_incompatibility(status)
   if status.running and status.compatible == false then
-    return "The running Herdr server is incompatible with the installed client; restart the Herdr server"
+    return "The running Herdr server is incompatible with the installed client; restart the Herdr server. "
+      .. M.RESTART_WARNING
   end
   if status.running and status.restart_needed == true then
-    return "The running Herdr server uses a different version; restart the Herdr server"
+    return "The running Herdr server uses a different version; restart the Herdr server. " .. M.RESTART_WARNING
   end
 end
 
@@ -881,9 +886,11 @@ local function pane_runs_expected_tool(self)
     return false
   end
   local matched_pid
+  local inventory_ok, inventory = pcall(Procs.new)
+  inventory = inventory_ok and inventory or nil
   for _, process in ipairs(info.foreground_processes or {}) do
     local pid = tonumber(process.pid)
-    if pid and self.tool:is_proc(to_proc(process)) then
+    if pid and self.tool:is_proc(to_proc(process, inventory)) then
       if self._authorized_pid == pid then
         return true
       end

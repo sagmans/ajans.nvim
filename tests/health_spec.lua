@@ -131,7 +131,9 @@ describe("health", function()
     assert.is_true(
       vim.tbl_contains(
         reports.error,
-        "The running Herdr server is incompatible with the installed client; restart the Herdr server"
+        "The running Herdr server is incompatible with the installed client; restart the Herdr server. "
+          .. "Restarting stops active pane processes; save work first or use Herdr's supported live handoff: "
+          .. "https://herdr.dev/docs/session-state/"
       )
     )
   end)
@@ -173,7 +175,51 @@ describe("health", function()
     require("ajans.health").check()
 
     assert.is_true(
-      vim.tbl_contains(reports.error, "The running Herdr server uses a different version; restart the Herdr server")
+      vim.tbl_contains(
+        reports.error,
+        "The running Herdr server uses a different version; restart the Herdr server. "
+          .. "Restarting stops active pane processes; save work first or use Herdr's supported live handoff: "
+          .. "https://herdr.dev/docs/session-state/"
+      )
+    )
+  end)
+
+  it("reports Linux process fallback without claiming nonexistent port detection", function()
+    setup_config({ cli = { mux = { backend = "tmux" } } })
+    Session.selected_backend = function()
+      return "tmux"
+    end
+    vim.fn.has = function(feature)
+      return (feature == "nvim-0.11.2" or feature == "linux") and 1 or 0
+    end
+    vim.fn.executable = function(name)
+      return name == "tmux" and 1 or 0
+    end
+    local reports = reporter()
+
+    require("ajans.health").check()
+
+    assert.is_true(vim.tbl_contains(reports.ok, "`ps` is not installed; using `/proc` for process discovery"))
+    assert.is_false(
+      vim.tbl_contains(reports.warn, "`lsof` is not installed, running processes and ports will not be detected")
+    )
+  end)
+
+  it("reports the actual macOS capability degraded by missing process tools", function()
+    setup_config({ cli = { mux = { backend = "tmux" } } })
+    Session.selected_backend = function()
+      return "tmux"
+    end
+    vim.fn.executable = function(name)
+      return name == "tmux" and 1 or 0
+    end
+    local reports = reporter()
+
+    require("ajans.health").check()
+
+    assert.is_true(vim.tbl_contains(reports.warn, "`ps` is not installed; tmux process discovery is unavailable"))
+    assert.is_true(
+      vim.tbl_contains(reports.warn, "`lsof` is not installed; tmux working-directory detection is unavailable")
     )
   end)
 

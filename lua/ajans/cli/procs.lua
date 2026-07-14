@@ -118,6 +118,7 @@ end
 ---@field pid number
 ---@field ppid number
 ---@field cmd string
+---@field executable? string
 ---@field env? table<string, string>
 ---@field cwd? string
 
@@ -133,7 +134,8 @@ P.__index = P
 ---@param ppid integer
 ---@param args string
 local function add_proc(self, pid, ppid, args)
-  self._procs[pid] = setmetatable({ pid = pid, ppid = ppid, cmd = args }, {
+  local executable = args:match('^%s*"([^"]+)"') or args:match("^%s*'([^']+)'") or args:match("^%s*(%S+)")
+  self._procs[pid] = setmetatable({ pid = pid, ppid = ppid, cmd = args, executable = executable }, {
     __index = function(t, key)
       local field = proc_fields[key]
       if field then

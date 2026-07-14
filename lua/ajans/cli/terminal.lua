@@ -404,31 +404,57 @@ function M:on_ready()
     end
     self._sending = true
     next = next:gsub("\r\n", "\n") -- normalize line endings
-    vim.schedule(function()
-      self:authorize_automated_input(function(accepted)
-        vim.schedule(function()
-          local delivered = accepted and self:is_running()
-          if delivered then
-            if self.parent and self.parent.send then
-              local ok
-              if next == "\r" then
-                ok = self.parent:submit()
-              else
-                ok = self.parent:send(next)
-              end
-              delivered = ok ~= false
+    local finished = false
+    local function finish(delivered, delivery_error)
+      if finished then
+        return
+      end
+      finished = true
+      if not delivered then
+        self.send_queue = {}
+      end
+      -- Release the queue before reporting because notification hooks may fail.
+      self._sending = false
+      if delivery_error then
+        Util.error("Failed to deliver terminal input: " .. tostring(delivery_error))
+      end
+    end
+    local function deliver(accepted)
+      local ok, delivered = pcall(function()
+        local sent = accepted and self:is_running()
+        if sent then
+          if self.parent and self.parent.send then
+            local result
+            if next == "\r" then
+              result = self.parent:submit()
             else
-              vim.api.nvim_chan_send(self.job, next)
+              result = self.parent:send(next)
             end
+            sent = result ~= false
+          else
+            vim.api.nvim_chan_send(self.job, next)
           end
-          if delivered and self:is_focused() then
-            vim.cmd.startinsert()
-          elseif not delivered then
-            self.send_queue = {}
-          end
-          self._sending = false
+        end
+        if sent and self:is_focused() then
+          vim.cmd.startinsert()
+        end
+        return sent
+      end)
+      if ok then
+        finish(delivered == true)
+      else
+        finish(false, delivered)
+      end
+    end
+    vim.schedule(function()
+      local ok, authorization_error = pcall(self.authorize_automated_input, self, function(accepted)
+        vim.schedule(function()
+          deliver(accepted)
         end)
       end)
+      if not ok then
+        finish(false, authorization_error)
+      end
     end)
   end)
 end
@@ -529,7 +555,7 @@ function M:hide()
 end
 
 function M:detach()
-  return self
+  return self:close()
 end
 
 function M:close()

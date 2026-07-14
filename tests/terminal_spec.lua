@@ -8,6 +8,7 @@ describe("terminal", function()
   local original_buf_call
   local original_put
   local original_startinsert
+  local original_error
 
   before_each(function()
     original_schedule = vim.schedule
@@ -17,6 +18,7 @@ describe("terminal", function()
     original_buf_call = vim.api.nvim_buf_call
     original_put = vim.api.nvim_put
     original_startinsert = vim.cmd.startinsert
+    original_error = require("ajans.util").error
   end)
 
   after_each(function()
@@ -27,6 +29,7 @@ describe("terminal", function()
     vim.api.nvim_buf_call = original_buf_call
     vim.api.nvim_put = original_put
     vim.cmd.startinsert = original_startinsert
+    require("ajans.util").error = original_error
   end)
 
   it("sends queued input to the terminal job channel", function()
@@ -147,6 +150,70 @@ describe("terminal", function()
 
     assert.are.equal(1, submits)
     assert.are.equal(0, sends)
+  end)
+
+  it("recovers the input queue when authorization or delivery throws", function()
+    local Terminal = require("ajans.cli.terminal")
+    local reports = {}
+    require("ajans.util").error = function(message)
+      reports[#reports + 1] = message
+    end
+    vim.schedule = function(callback)
+      callback()
+    end
+
+    for _, failure in ipairs({ "authorization", "delivery" }) do
+      local terminal = setmetatable({
+        job = 42,
+        send_queue = { "secret", "later" },
+        timer = {
+          start = function(_, _, _, callback)
+            callback()
+          end,
+        },
+        parent = {
+          send = function()
+            if failure == "delivery" then
+              error("send failed")
+            end
+            return true
+          end,
+          authorize_automated_input = function(_, callback)
+            if failure == "authorization" then
+              error("authorization failed")
+            end
+            callback(true)
+          end,
+        },
+        is_running = function()
+          return true
+        end,
+        is_focused = function()
+          return false
+        end,
+      }, Terminal)
+
+      assert.has_no.errors(function()
+        terminal:on_ready()
+      end)
+      assert.is_false(terminal._sending)
+      assert.are.same({}, terminal.send_queue)
+    end
+    assert.are.equal(2, #reports)
+  end)
+
+  it("closes terminal resources when detached", function()
+    local Terminal = require("ajans.cli.terminal")
+    local closed = false
+    local terminal = setmetatable({
+      close = function()
+        closed = true
+      end,
+    }, Terminal)
+
+    terminal:detach()
+
+    assert.is_true(closed)
   end)
 
   it("authorizes a fresh tmux prompt only after resolving the target process", function()

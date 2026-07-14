@@ -32,9 +32,12 @@ function M.check()
       if not status then
         error("Unable to query the selected Herdr server: " .. (status_err or "unknown error"))
       elseif status.running and status.compatible == false then
-        error("The running Herdr server is incompatible with the installed client; restart the Herdr server")
+        error(
+          "The running Herdr server is incompatible with the installed client; restart the Herdr server. "
+            .. Herdr.RESTART_WARNING
+        )
       elseif status.running and status.restart_needed == true then
-        error("The running Herdr server uses a different version; restart the Herdr server")
+        error("The running Herdr server uses a different version; restart the Herdr server. " .. Herdr.RESTART_WARNING)
       elseif status.running then
         ok("The selected Herdr server is running")
       else
@@ -50,11 +53,19 @@ function M.check()
   end
 
   if backend == "tmux" and vim.fn.has("win32") == 0 then
-    for _, command in ipairs({ "ps", "lsof" }) do
-      if vim.fn.executable(command) == 1 then
-        ok("`" .. command .. "` is installed")
+    local linux = vim.fn.has("linux") == 1
+    if vim.fn.executable("ps") == 1 then
+      ok("`ps` is installed")
+    elseif linux then
+      ok("`ps` is not installed; using `/proc` for process discovery")
+    else
+      warn("`ps` is not installed; tmux process discovery is unavailable")
+    end
+    if not linux then
+      if vim.fn.executable("lsof") == 1 then
+        ok("`lsof` is installed")
       else
-        warn("`" .. command .. "` is not installed, running processes and ports will not be detected")
+        warn("`lsof` is not installed; tmux working-directory detection is unavailable")
       end
     end
   end

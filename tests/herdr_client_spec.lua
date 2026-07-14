@@ -14,6 +14,7 @@ describe("Herdr client", function()
   local original_fs_stat
   local original_fs_lstat
   local original_getuid
+  local original_fs_realpath
 
   before_each(function()
     original_status = Client._status
@@ -27,6 +28,10 @@ describe("Herdr client", function()
     original_fs_stat = Client._fs_stat
     original_fs_lstat = Client._fs_lstat
     original_getuid = Client._getuid
+    original_fs_realpath = Client._fs_realpath
+    Client._fs_realpath = function(path)
+      return path
+    end
     Client._request_id = 0
   end)
 
@@ -42,6 +47,7 @@ describe("Herdr client", function()
     Client._fs_stat = original_fs_stat
     Client._fs_lstat = original_fs_lstat
     Client._getuid = original_getuid
+    Client._fs_realpath = original_fs_realpath
   end)
 
   local function capture_request(response)
@@ -210,6 +216,32 @@ describe("Herdr client", function()
       assert.is_string(err)
     end)
   end
+
+  it("accepts an owner-only socket through macOS directory aliases", function()
+    Client._fs_realpath = function(path)
+      assert.are.equal("/tmp", path)
+      return "/private/tmp"
+    end
+    Client._fs_stat = function(path)
+      if path == "/tmp/herdr.sock" or path == "/private/tmp/herdr.sock" then
+        return { type = "socket", uid = 501, mode = 384 }
+      end
+      return { type = "directory", uid = path == "/private" and 0 or 501, mode = path == "/private/tmp" and 1023 or 493 }
+    end
+    Client._fs_lstat = function(path)
+      if path == "/tmp/herdr.sock" then
+        return { type = "socket", uid = 501, mode = 384 }
+      elseif path == "/tmp" then
+        return { type = "link", uid = 0, mode = 511 }
+      end
+      return Client._fs_stat(path)
+    end
+    Client._getuid = function()
+      return 501
+    end
+
+    assert.is_true(Client.validate_socket("/tmp/herdr.sock"))
+  end)
 
   it("accepts an owner-only socket", function()
     Client._fs_stat = function(path)

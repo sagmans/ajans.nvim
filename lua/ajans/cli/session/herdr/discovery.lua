@@ -1,4 +1,5 @@
 local Config = require("ajans.config")
+local Procs = require("ajans.cli.procs")
 local Util = require("ajans.util")
 
 local M = {}
@@ -59,22 +60,50 @@ function M.process_pids(process_info)
   return pids
 end
 
+---@param command string
+---@return string?
+local function command_executable(command)
+  return command:match('^%s*"([^"]+)"') or command:match("^%s*'([^']+)'") or command:match("^%s*(%S+)")
+end
+
 ---@param process table
+---@param inventory? ajans.cli.Procs
 ---@return ajans.cli.Proc
-function M.to_proc(process)
+function M.to_proc(process, inventory)
+  local pid = tonumber(process.pid) or 0
+  local hydrated = inventory and inventory:get(pid) or nil
   local cmd = process.cmdline
   if type(cmd) ~= "string" or cmd == "" then
     cmd = type(process.argv) == "table" and #process.argv > 0 and table.concat(process.argv, " ")
       or process.argv0
       or process.name
+      or hydrated and hydrated.cmd
       or ""
   end
-  return {
-    pid = tonumber(process.pid) or 0,
-    ppid = 0,
+  local executable = process.argv0
+    or type(process.argv) == "table" and process.argv[1]
+    or hydrated and hydrated.executable
+    or command_executable(cmd)
+  local proc = {
+    pid = pid,
+    ppid = tonumber(process.ppid) or hydrated and hydrated.ppid or 0,
     cmd = cmd,
+    executable = executable,
     cwd = process.cwd,
+    env = process.env,
   }
+  if hydrated then
+    return setmetatable(proc, {
+      __index = function(t, key)
+        if key == "cwd" or key == "env" then
+          local value = hydrated[key]
+          rawset(t, key, value or false)
+          return value
+        end
+      end,
+    })
+  end
+  return proc
 end
 
 ---@param backend ajans.herdr.DiscoveryBackend
@@ -149,7 +178,7 @@ end
 ---@param tool_names string[]
 ---@param info table?
 ---@return ajans.cli.Tool?, ajans.cli.Proc?
-local function match_pane(pane, agent, tools, tool_names, info)
+local function match_pane(pane, agent, tools, tool_names, info, inventory)
   local name = tool_name_for_owned_agent(agent and agent.name)
   if name then
     return tools[name]
@@ -162,7 +191,7 @@ local function match_pane(pane, agent, tools, tool_names, info)
     end
   end
   for _, process in ipairs((info and info.foreground_processes) or {}) do
-    local proc = M.to_proc(process)
+    local proc = M.to_proc(process, inventory)
     for _, tool_name in ipairs(tool_names) do
       if tools[tool_name]:is_proc(proc) then
         return tools[tool_name], proc
@@ -271,6 +300,16 @@ function M.sessions(backend)
   local tools = Config.tools()
   local tool_names = vim.tbl_keys(tools)
   table.sort(tool_names)
+  local inventory
+  local inventory_loaded = false
+  local function process_inventory()
+    if not inventory_loaded then
+      inventory_loaded = true
+      local ok, value = pcall(Procs.new)
+      inventory = ok and value or nil
+    end
+    return inventory
+  end
   local classified = {}
   local unmatched = {}
   for _, pane in ipairs(panes) do
@@ -289,7 +328,7 @@ function M.sessions(backend)
     local tool = classified[pane.pane_id]
     local proc
     if not tool then
-      tool, proc = match_pane(pane, agent, tools, tool_names, process_info)
+      tool, proc = match_pane(pane, agent, tools, tool_names, process_info, process_inventory())
     end
     if tool then
       local cwd = proc and proc.cwd

@@ -39,10 +39,11 @@ describe("cli tool runtime configs", function()
   end)
 
   it("matches bundled tool processes by executable name", function()
-    local tool = require("ajans.cli.tool").get("copilot")
+    local tool = require("ajans.cli.tool").get("claude")
 
-    assert.is_true(tool:is_proc({ cmd = "/opt/bin/copilot --banner" }))
-    assert.is_false(tool:is_proc({ cmd = "/opt/bin/copilot-helper" }))
+    assert.is_true(tool:is_proc({ cmd = "/opt/bin/claude --banner", executable = "claude" }))
+    assert.is_false(tool:is_proc({ cmd = "/usr/bin/cat - claude", executable = "cat" }))
+    assert.is_false(tool:is_proc({ cmd = "/opt/bin/claude-helper", executable = "claude-helper" }))
   end)
 end)
 

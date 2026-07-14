@@ -21,6 +21,16 @@ local base = setmetatable({}, {
   end,
 })
 
+---@param proc ajans.cli.Proc
+---@return string
+local function executable_name(proc)
+  local executable = proc.executable
+  if type(executable) ~= "string" or executable == "" then
+    executable = proc.cmd:match('^%s*"([^"]+)"') or proc.cmd:match("^%s*'([^']+)'") or proc.cmd:match("^%s*(%S+)") or ""
+  end
+  return vim.fs.basename(executable)
+end
+
 ---@param name string
 function M.get(name)
   local config =
@@ -40,7 +50,9 @@ function M:is_proc(proc)
     local ok, re = pcall(vim.regex, is_proc)
     if ok then
       is_proc = function(_, p)
-        return re:match_str(p.cmd) ~= nil
+        local executable = executable_name(p)
+        local start, finish = re:match_str(executable)
+        return start == 0 and finish == #executable
       end
     else
       is_proc = function()

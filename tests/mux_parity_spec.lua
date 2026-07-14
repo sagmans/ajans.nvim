@@ -739,6 +739,60 @@ describe("multiplexer parity contract", function()
     end
   end)
 
+  it("rejects argument-only tool names in both backend authorization paths", function()
+    setup_config("tmux")
+    local tool = Config.get_tool("claude")
+    local tmux = tmux_session()
+    tmux.tool = tool
+    Procs.new = function()
+      return {
+        get = function()
+          return nil
+        end,
+        walk = function(_, _, callback)
+          callback({ pid = 101, ppid = 1, cmd = "cat - claude", executable = "cat" })
+        end,
+      }
+    end
+    Util.exec = function()
+      return { "101:cat" }
+    end
+    assert.is_false(tmux:accepts_automated_input())
+
+    setup_config("herdr")
+    local herdr = herdr_session({ agent = false })
+    herdr.tool = Config.get_tool("claude")
+    Herdr._run = function()
+      return success({
+        process_info = {
+          foreground_processes = { { pid = 101, argv0 = "cat", cmdline = "cat - claude" } },
+        },
+      })
+    end
+    assert.is_false(herdr:accepts_automated_input())
+  end)
+
+  it("hydrates Herdr custom matchers with tmux-equivalent process metadata", function()
+    setup_config("herdr")
+    local herdr = herdr_session({ agent = false })
+    herdr.tool.is_proc = function(_, proc)
+      return proc.ppid == 7 and proc.env and proc.env.TOKEN == "present"
+    end
+    Procs.new = function()
+      return {
+        get = function(_, pid)
+          assert.are.equal(101, pid)
+          return { pid = 101, ppid = 7, cmd = "custom", env = { TOKEN = "present" } }
+        end,
+      }
+    end
+    Herdr._run = function()
+      return success({ process_info = { foreground_processes = { { pid = 101, cmdline = "custom" } } } })
+    end
+
+    assert.is_true(herdr:accepts_automated_input())
+  end)
+
   for _, capability in ipairs(capability_names) do
     for _, adapter_name in ipairs({ "tmux", "herdr" }) do
       it(adapter_name .. " satisfies " .. capability, function()

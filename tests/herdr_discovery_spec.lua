@@ -114,13 +114,39 @@ describe("Herdr discovery", function()
         foreground_processes = { { pid = 2 }, { pid = 3 } },
       })
     )
-    assert.are.same(
-      { pid = 7, ppid = 0, cmd = "custom-agent --flag", cwd = "/tmp" },
-      Discovery.to_proc({
-        pid = 7,
-        argv = { "custom-agent", "--flag" },
-        cwd = "/tmp",
-      })
-    )
+    local proc = Discovery.to_proc({
+      pid = 7,
+      argv0 = "custom-agent",
+      argv = { "custom-agent", "--flag" },
+      cwd = "/tmp",
+    })
+    assert.are.equal(7, proc.pid)
+    assert.are.equal(0, proc.ppid)
+    assert.are.equal("custom-agent --flag", proc.cmd)
+    assert.are.equal("custom-agent", proc.executable)
+    assert.are.equal("/tmp", proc.cwd)
+  end)
+
+  it("hydrates matcher metadata from one process inventory", function()
+    local inventory = {
+      get = function(_, pid)
+        assert.are.equal(7, pid)
+        return {
+          pid = 7,
+          ppid = 5,
+          cmd = "/usr/bin/custom-agent --flag",
+          executable = "/usr/bin/custom-agent",
+          cwd = "/inventory",
+          env = { TOKEN = "value" },
+        }
+      end,
+    }
+
+    local proc = Discovery.to_proc({ pid = 7, name = "custom-agent" }, inventory)
+
+    assert.are.equal(5, proc.ppid)
+    assert.are.equal("/usr/bin/custom-agent", proc.executable)
+    assert.are.equal("/inventory", proc.cwd)
+    assert.are.same({ TOKEN = "value" }, proc.env)
   end)
 end)

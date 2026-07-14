@@ -6,7 +6,7 @@ Ajans does not create global keymaps by itself. The examples below assume the su
 
 ## Backend selection
 
-`cli.mux.backend = "auto"` is the default. Auto-selection prefers a usable multiplexer hosting Neovim, then a running compatible Herdr server, the sole usable backend, and tmux as the compatibility fallback. Use `"tmux"` or `"herdr"` for an explicit choice.
+`cli.mux.backend = "auto"` is the default. Auto-selection prefers a usable multiplexer hosting Neovim, then a running compatible Herdr server, the sole usable backend, and tmux as the compatibility fallback. If Herdr is the only installed backend, Ajans selects it even when validation fails so `:checkhealth ajans` can report the cause. Use `"tmux"` or `"herdr"` for an explicit choice.
 
 Herdr `>= 0.7.0` is supported on macOS and Linux. When Neovim runs inside Herdr, Ajans maps `create = "window"` to a Herdr tab and `create = "split"` to a Herdr pane split. Native placement uses `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID`, which Herdr exports to hosted panes. Named sessions selected with `HERDR_SESSION` or `HERDR_SOCKET_PATH` are inherited automatically.
 
@@ -316,7 +316,7 @@ For automatic reloads, enable Neovim `autoread`:
 
 1. Run `:checkhealth ajans` and confirm the intended backend was selected.
 2. For tmux, verify `tmux` is installed.
-3. For Herdr, verify `herdr --version` reports `0.7.0` or newer and restart an incompatible or stale Herdr server.
+3. For Herdr, verify `herdr --version` reports `0.7.0` or newer. Before restarting an incompatible or stale server, save active pane work: a restart stops the original shells, agents, tests, and other pane processes. Prefer Herdr's supported live handoff when available; see [Herdr session state and recovery](https://herdr.dev/docs/session-state/).
 4. Set `cli.mux.backend` explicitly if auto-selection chose a different installed backend.
 
 ### Picker action fails
