@@ -1,5 +1,6 @@
 ---@module 'luassert'
 
+local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
 local Herdr = require("ajans.cli.session.herdr")
 local Procs = require("ajans.cli.procs")
@@ -676,6 +677,7 @@ describe("multiplexer parity contract", function()
       error = Util.error,
       info = Util.info,
       herdr_run = Herdr._run,
+      herdr_trusted_socket = Client.trusted_socket,
       herdr_run_many = Herdr._run_many,
       herdr_supports_snapshot = Herdr.supports_snapshot,
       herdr_ensure_server = Herdr.ensure_server,
@@ -695,6 +697,9 @@ describe("multiplexer parity contract", function()
     }
     Util.error = function() end
     Util.info = function() end
+    Client.trusted_socket = function()
+      return "/tmp/herdr-test.sock"
+    end
   end)
 
   after_each(function()
@@ -702,6 +707,7 @@ describe("multiplexer parity contract", function()
     Util.error = originals.error
     Util.info = originals.info
     Herdr._run = originals.herdr_run
+    Client.trusted_socket = originals.herdr_trusted_socket
     Herdr._run_many = originals.herdr_run_many
     Herdr.supports_snapshot = originals.herdr_supports_snapshot
     Herdr.ensure_server = originals.herdr_ensure_server
