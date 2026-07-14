@@ -5,7 +5,7 @@ local Util = require("ajans.util")
 local M = {}
 
 ---@class ajans.herdr.DiscoveryBackend
----@field request fun(args:string[], opts?:table):table?, string?
+---@field request fun(args:string[], opts?:table):(table?, string?)
 ---@field supports_snapshot fun():boolean
 ---@field _run_many fun(commands:string[][]):vim.SystemCompleted[]
 
@@ -138,7 +138,7 @@ end
 ---@return string
 local function result_error(result)
   local output = result.stderr ~= "" and result.stderr or result.stdout
-  return tostring(output or "unknown error"):gsub("%s+$", "")
+  return (tostring(output or "unknown error"):gsub("%s+$", ""))
 end
 
 ---@param backend ajans.herdr.DiscoveryBackend
@@ -185,6 +185,7 @@ end
 ---@param tools table<string,ajans.cli.Tool>
 ---@param tool_names string[]
 ---@param info table?
+---@param inventory? ajans.cli.Procs
 ---@return ajans.cli.Tool?, ajans.cli.Proc?
 local function match_pane(pane, agent, tools, tool_names, info, inventory)
   local name = tool_name_for_owned_agent(agent and agent.name)
@@ -369,7 +370,8 @@ function M.sessions(backend)
   local sessions = {}
   for _, pane in ipairs(panes) do
     local agent = agents[pane.pane_id]
-    local process_info = process_infos[pane.pane_id] or embedded_process_infos[pane.pane_id]
+    local process_info ---@type table?
+    process_info = process_infos[pane.pane_id] or embedded_process_infos[pane.pane_id]
     local process_valid, process_malformed = valid_process_info(process_info)
     malformed_process_info = malformed_process_info or process_malformed
     process_info = process_valid and process_info or nil

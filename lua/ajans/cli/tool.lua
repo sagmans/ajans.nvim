@@ -39,7 +39,7 @@ local function basename(value)
   return type(value) == "string" and value ~= "" and vim.fs.basename(value) or ""
 end
 
----@param proc ajans.cli.Proc
+---@param proc ajans.cli.ProcessMatch
 ---@return string[], {start:integer,finish:integer}[]
 local function command_tokens(proc)
   local command = proc.cmd or ""
@@ -86,7 +86,7 @@ local function command_tokens(proc)
 end
 
 ---@param self ajans.cli.Tool
----@param proc ajans.cli.Proc
+---@param proc ajans.cli.ProcessMatch
 ---@return {start:integer,finish:integer}[]
 local function executable_spans(self, proc)
   local argv, spans = command_tokens(proc)
@@ -116,7 +116,7 @@ function M.get(name)
   return self
 end
 
----@param proc ajans.cli.Proc
+---@param proc ajans.cli.ProcessMatch
 function M:is_proc(proc)
   local is_proc = self.config.is_proc
   if type(is_proc) == "string" then

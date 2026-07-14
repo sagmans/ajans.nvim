@@ -14,6 +14,7 @@ M._attachment_generation = 0
 ---@field identity? string stable backend resource identity
 ---@field cwd string
 ---@field tool ajans.cli.Tool|string
+---@field backend? string
 ---@field pids? integer[] list of pids associated with this session
 ---@field started? boolean
 ---@field external? boolean external sessions won't be opened in a terminal
@@ -21,20 +22,58 @@ M._attachment_generation = 0
 ---@field mux_session? string
 ---@field mux_backend? string
 ---@field mux_identity? string stable identity of the wrapped backend session
+---@field herdr_terminal_id? string
+---@field herdr_pane_id? string
+---@field herdr_workspace_id? string
+---@field herdr_tab_id? string
+---@field herdr_agent? boolean
+---@field herdr_name? string
+---@field herdr_label? string
+---@field herdr_agent_session? any
+---@field herdr_placement? "workspace"|"tab"|"split"
 
----@alias ajans.cli.session.Opts ajans.cli.session.State|{cwd?:string,id?:string}
+---@class ajans.cli.session.CreateOpts
+---@field tool ajans.cli.Tool|string
+---@field id? string
+---@field identity? string
+---@field cwd? string
+---@field pids? integer[]
+---@field started? boolean
+---@field external? boolean
+---@field parent? ajans.cli.Session
+---@field mux_session? string
+---@field mux_backend? string
+---@field mux_identity? string
+---@field herdr_terminal_id? string
+---@field herdr_pane_id? string
+---@field herdr_workspace_id? string
+---@field herdr_tab_id? string
+---@field herdr_agent? boolean
+---@field herdr_name? string
+---@field herdr_label? string
+---@field herdr_agent_session? any
+---@field herdr_placement? "workspace"|"tab"|"split"
+---@field fresh? boolean
+
+---@alias ajans.cli.session.Opts ajans.cli.session.State|ajans.cli.session.CreateOpts
 
 ---@class ajans.cli.Session: ajans.cli.session.State
 ---@field sid string unique id based on tool and cwd
 ---@field tool ajans.cli.Tool
 ---@field backend string
+---@field fresh? boolean
+---@field _authorized_pid? integer
+---@field _authorized_process? ajans.cli.ProcessIdentity
+---@field _sending? boolean
+---@field _last_send_ok? boolean
+---@field priority integer
 ---@field dump? fun(self:ajans.cli.Session):string?
 local B = {}
 B.__index = B
 B.priority = 0
 
 --- Send text to the session
----@param text string
+---@param _text string
 function B:send(_text)
   error("Backend:send() not implemented")
 end
@@ -50,6 +89,7 @@ end
 --- Attach to an existing session
 --- If the backend returns a Cmd, a new terminal session will be spawned
 ---@return ajans.cli.terminal.Cmd?
+---@return boolean? accepted
 function B:attach() end
 
 --- Detach from an existing session
@@ -117,7 +157,7 @@ function M.resolve_backend(opts)
   opts = opts or {}
   local configured = opts.configured or Config.cli.mux.backend or "auto"
   if configured == "tmux" or configured == "herdr" then
-    return configured
+    return configured --[[@as "tmux"|"herdr"]]
   end
 
   local installed = opts.installed

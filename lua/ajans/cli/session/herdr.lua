@@ -5,12 +5,25 @@ local Layout = require("ajans.cli.session.herdr.layout")
 local Procs = require("ajans.cli.procs")
 local Util = require("ajans.util")
 
+---@class ajans.herdr.SendOperation
+---@field kind "send"
+---@field text string
+---@field ok? boolean
+
+---@class ajans.herdr.SubmitOperation
+---@field kind "submit"
+---@field ok? boolean
+
+---@alias ajans.herdr.InputOperation ajans.herdr.SendOperation|ajans.herdr.SubmitOperation
+
 ---@class ajans.cli.muxer.Herdr: ajans.cli.Session
----@field herdr_terminal_id string
----@field herdr_pane_id string
----@field herdr_workspace_id string
----@field herdr_tab_id string
----@field herdr_agent boolean
+---@field herdr_terminal_id? string
+---@field herdr_pane_id? string
+---@field herdr_workspace_id? string
+---@field herdr_tab_id? string
+---@field herdr_agent? boolean
+---@field _liveness_error? {message:string,time:integer}
+---@field _input_queue? ajans.herdr.InputOperation[]
 local M = {}
 M.__index = M
 
@@ -101,7 +114,8 @@ end
 
 ---@param cmd string[]
 ---@param opts? vim.SystemOpts
----@return vim.SystemObj
+---@return vim.SystemObj|boolean spawned
+---@return string? error
 function M._spawn(cmd, opts)
   if vim.deep_equal(cmd, { "herdr", "server" }) then
     return Client.spawn_server()
@@ -383,13 +397,7 @@ function M.ensure_server()
   if status.running then
     return true
   end
-  local ok, spawned, spawn_err = pcall(M._spawn, { "herdr", "server" }, {
-    text = true,
-    detach = true,
-    stdin = false,
-    stdout = false,
-    stderr = false,
-  })
+  local ok, spawned, spawn_err = pcall(M._spawn, { "herdr", "server" })
   if not ok or not spawned then
     Util.error("Failed to start the Herdr server: " .. tostring(spawn_err or spawned))
     return false
@@ -406,11 +414,24 @@ end
 M.tool_name_for_label = Discovery.tool_name_for_label
 local to_proc = Discovery.to_proc
 
+---@type ajans.herdr.DiscoveryBackend
+local DISCOVERY_BACKEND = {
+  request = function(args, opts)
+    return M.request(args, opts)
+  end,
+  supports_snapshot = function()
+    return M.supports_snapshot()
+  end,
+  _run_many = function(commands)
+    return M._run_many(commands)
+  end,
+}
+
 ---@param pane table
 ---@param opts? table
 ---@return table?
 local function pane_process_info(pane, opts)
-  return Discovery.pane_process_info(M, pane, opts)
+  return Discovery.pane_process_info(DISCOVERY_BACKEND, pane, opts)
 end
 
 ---@return boolean
@@ -421,12 +442,12 @@ end
 
 ---@return table?, string?
 function M.snapshot()
-  return Discovery.snapshot(M)
+  return Discovery.snapshot(DISCOVERY_BACKEND)
 end
 
 ---@return ajans.cli.session.State[], boolean
 function M.sessions()
-  return Discovery.sessions(M)
+  return Discovery.sessions(DISCOVERY_BACKEND)
 end
 
 function M:init()
@@ -680,6 +701,7 @@ function M:size_split(pane_id, direction)
     Util.error("Herdr pane layout is invalid: " .. layout_error)
     return false
   end
+  ---@cast layout table
   local pane = Layout.pane(layout, pane_id)
   local split = Layout.containing_split(layout, pane_id, direction)
   if not pane or not split then
@@ -736,6 +758,7 @@ function M:size_split(pane_id, direction)
     Util.error("Herdr pane resize returned an invalid layout: " .. final_error)
     return false
   end
+  ---@cast final_layout table
   local final_split = Layout.split(final_layout, split.id)
   local final_pane = Layout.pane(final_layout, pane_id)
   if not final_split or not final_pane then
@@ -784,9 +807,11 @@ function M:start()
   elseif Config.cli.mux.create == "split" then
     return self:start_split()
   end
+  return nil, false
 end
 
 ---@return ajans.cli.terminal.Cmd?
+---@return boolean? accepted
 function M:attach()
   if self.external or not self.herdr_terminal_id then
     return
@@ -887,8 +912,8 @@ local function pane_runs_expected_tool(self)
   end
   local matched_pid
   local matched_process
-  local inventory_ok, inventory = pcall(Procs.new)
-  inventory = inventory_ok and inventory or nil
+  local inventory_ok, discovered_inventory = pcall(Procs.new)
+  local inventory = inventory_ok and discovered_inventory or nil ---@type ajans.cli.Procs?
   for _, process in ipairs(info.foreground_processes or {}) do
     local pid = tonumber(process.pid)
     local proc = pid and to_proc(process, inventory) or nil
@@ -993,7 +1018,7 @@ local function drain_input(self)
     return
   end
   self._sending = true
-  local operation
+  local operation ---@type ajans.herdr.InputOperation?
   local ok, failure = xpcall(function()
     while #self._input_queue > 0 do
       operation = table.remove(self._input_queue, 1)
@@ -1051,7 +1076,7 @@ function M:send(text)
     return false
   end
   self._input_queue = self._input_queue or {}
-  local operation = { kind = "send", text = text }
+  local operation = { kind = "send", text = text } ---@type ajans.herdr.SendOperation
   self._input_queue[#self._input_queue + 1] = operation
   drain_input(self)
   return operation.ok
@@ -1062,7 +1087,7 @@ function M:submit()
     return false
   end
   self._input_queue = self._input_queue or {}
-  local operation = { kind = "submit" }
+  local operation = { kind = "submit" } ---@type ajans.herdr.SubmitOperation
   self._input_queue[#self._input_queue + 1] = operation
   drain_input(self)
   return operation.ok

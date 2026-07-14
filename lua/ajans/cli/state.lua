@@ -189,7 +189,7 @@ function M.attach(state, opts)
   session = Session.attach(session)
 
   state = M.get_state(session) -- update state
-  local attached = not was_attached and state.attached
+  local attached = not was_attached and state.attached == true
   local terminal = state.terminal
   if terminal then
     if opts.show then

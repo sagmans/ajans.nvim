@@ -2,6 +2,7 @@ local Util = require("ajans.util")
 
 local M = {}
 
+---@alias ajans.Pos [integer, integer]
 ---@alias ajans.Chunk { [1]:string, [2]?:(string|string[])}
 ---@alias ajans.Text ajans.Chunk[]
 

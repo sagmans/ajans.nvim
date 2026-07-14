@@ -1,6 +1,6 @@
 # LuaLS diagnostic remediation scope — Ajans
 
-Status: approved design; implementation pending.
+Status: completed.
 
 ## Goal
 
@@ -71,9 +71,9 @@ Use localized contract repair. Types remain beside their owning modules; no cent
 
 ## Verification
 
-- `./scripts/test`
-- `stylua --check lua tests`
-- LuaLS source diagnostics with temporary Neovim/Luv/Snacks metadata; no Ajans-owned residuals
-- remediation-scope Selene validation
-- `./scripts/docs` with no generated drift
-- `git diff --check`
+- `./scripts/test`: 374 cases, 0 failures
+- `stylua --check lua tests`: clean
+- LuaLS source diagnostics with temporary Neovim/Snacks metadata: no Ajans-owned residuals; one excluded Neovim 0.13 `buffer` compatibility warning remains
+- remediation-scope Selene validation: 0 errors, 0 warnings
+- `./scripts/docs`: generated references synchronized
+- `git diff --check`: clean

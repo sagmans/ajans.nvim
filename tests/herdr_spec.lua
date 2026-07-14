@@ -605,7 +605,7 @@ describe("herdr backend", function()
     assert.are.same({}, errors)
   end)
 
-  it("starts a detached server and waits for bounded readiness only on creation", function()
+  it("delegates detached server startup and waits for bounded readiness only on creation", function()
     local status_checks = 0
     local spawned
     local waited
@@ -620,7 +620,7 @@ describe("herdr backend", function()
       return status_checks >= 1
     end
     Herdr._spawn = function(cmd, opts)
-      spawned = { cmd = vim.deepcopy(cmd), opts = vim.deepcopy(opts) }
+      spawned = { cmd = vim.deepcopy(cmd), opts = opts }
       return {}
     end
     Herdr._wait = function(timeout, predicate, interval)
@@ -630,7 +630,7 @@ describe("herdr backend", function()
 
     assert.is_true(Herdr.ensure_server())
     assert.are.same({ "herdr", "server" }, spawned.cmd)
-    assert.is_true(spawned.opts.detach)
+    assert.is_nil(spawned.opts)
     assert.are.same({ timeout = Herdr.STARTUP_TIMEOUT, interval = Herdr.STARTUP_INTERVAL }, waited)
   end)
 

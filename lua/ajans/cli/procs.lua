@@ -122,10 +122,10 @@ M._fs_dir = vim.fs.dir
 M._read_file = read_file
 M._fs_readlink = vim.uv.fs_readlink
 
----@class ajans.cli.Proc
----@field pid number
----@field ppid number
+---@class ajans.cli.ProcessMatch
 ---@field cmd string
+---@field pid? number
+---@field ppid? number
 ---@field argv? string[]
 ---@field executable? string
 ---@field runtime_executable? string
@@ -134,6 +134,15 @@ M._fs_readlink = vim.uv.fs_readlink
 ---@field tpgid? number
 ---@field env? table<string, string>
 ---@field cwd? string
+
+---@class ajans.cli.Proc: ajans.cli.ProcessMatch
+---@field pid number
+---@field ppid number
+
+---@class ajans.cli.ProcessIdentity
+---@field pid number
+---@field start_time? string
+---@field runtime_executable? string
 
 ---@class ajans.cli.Procs
 ---@field _procs table<number,ajans.cli.Proc>
@@ -277,7 +286,8 @@ function P:update(opts)
   self._children = {}
   self._complete = false
   if have_ps and not (opts and opts.force_proc) then
-    local lines = Util.exec(M.ps_command(), { timeout = opts and opts.timeout, notify = false })
+    local cmd = M.ps_command()
+    local lines = cmd and Util.exec(cmd, { timeout = opts and opts.timeout, notify = false })
     if lines then
       update_from_ps(self, lines)
       if self._complete or not have_proc then
@@ -298,7 +308,7 @@ function P:is_complete()
 end
 
 ---@param proc ajans.cli.Proc
----@return table
+---@return ajans.cli.ProcessIdentity
 function M.identity(proc)
   return {
     pid = proc.pid,
@@ -307,8 +317,8 @@ function M.identity(proc)
   }
 end
 
----@param expected table?
----@param actual table?
+---@param expected ajans.cli.ProcessIdentity?
+---@param actual ajans.cli.ProcessIdentity?
 ---@return boolean
 function M.same_identity(expected, actual)
   if not expected or not actual or expected.pid ~= actual.pid then

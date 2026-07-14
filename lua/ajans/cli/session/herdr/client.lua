@@ -250,10 +250,20 @@ local function env_pair(value)
   return value:sub(1, split - 1), value:sub(split + 1)
 end
 
+---@class ajans.herdr.AgentStartParams
+---@field name? string
+---@field cwd? string
+---@field workspace_id? string
+---@field tab_id? string
+---@field split? string
+---@field argv? string[]
+---@field env table<string,string>
+---@field focus boolean
+
 ---@param cmd string[]
 ---@return vim.SystemCompleted
 local function start(cmd)
-  local params = { env = {}, focus = false }
+  local params = { env = {}, focus = false } ---@type ajans.herdr.AgentStartParams
   local index = 4
   params.name = cmd[index]
   index = index + 1
@@ -270,17 +280,20 @@ local function start(cmd)
       params.env[key] = value
       index = index + 2
     else
-      local fields = {
-        ["--cwd"] = "cwd",
-        ["--workspace"] = "workspace_id",
-        ["--tab"] = "tab_id",
-        ["--split"] = "split",
-      }
-      local field = fields[flag]
-      if not field or cmd[index + 1] == nil then
+      local value = cmd[index + 1]
+      if value == nil then
+        return { code = 2, signal = 0, stdout = "", stderr = "invalid Herdr agent start command" }
+      elseif flag == "--cwd" then
+        params.cwd = value
+      elseif flag == "--workspace" then
+        params.workspace_id = value
+      elseif flag == "--tab" then
+        params.tab_id = value
+      elseif flag == "--split" then
+        params.split = value
+      else
         return { code = 2, signal = 0, stdout = "", stderr = "invalid Herdr agent start command" }
       end
-      params[field] = cmd[index + 1]
       index = index + 2
     end
   end

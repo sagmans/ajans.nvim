@@ -2,9 +2,19 @@ local Config = require("ajans.config")
 local Procs = require("ajans.cli.procs")
 local Util = require("ajans.util")
 
+---@class ajans.tmux.TextOperation
+---@field kind "text"
+---@field text string
+
+---@class ajans.tmux.SubmitOperation
+---@field kind "submit"
+
+---@alias ajans.tmux.InputOperation ajans.tmux.TextOperation|ajans.tmux.SubmitOperation
+
 ---@class ajans.cli.muxer.Tmux: ajans.cli.Session
----@field tmux_pane_id string
----@field tmux_pid number
+---@field tmux_pane_id? string
+---@field tmux_pid? number
+---@field _input_queue? ajans.tmux.InputOperation[]
 local M = {}
 M.__index = M
 
@@ -309,7 +319,7 @@ function M:_drain_input()
     return
   end
   self._input_queue = self._input_queue or {}
-  local item = table.remove(self._input_queue, 1)
+  local item = table.remove(self._input_queue, 1) ---@type ajans.tmux.InputOperation?
   if not item then
     return
   end

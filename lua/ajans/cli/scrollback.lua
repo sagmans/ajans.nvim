@@ -38,7 +38,7 @@ vim.on_key(function(key, typed)
   end
 end)
 
----@param terminal ajans.cli.Terminal
+---@param terminal {parent?:{dump?:function},tool:{native_scroll?:boolean}}
 function M.is_enabled(terminal)
   return terminal.parent and terminal.parent.dump ~= nil and not terminal.tool.native_scroll
 end
@@ -217,8 +217,8 @@ function M:update(opts)
   end
 end
 
----@param win_pos? ajans.Pos
-function M:scroll(win_pos)
+---@param _win_pos? ajans.Pos
+function M:scroll(_win_pos)
   local terminal = self.terminal()
   if not terminal then
     return

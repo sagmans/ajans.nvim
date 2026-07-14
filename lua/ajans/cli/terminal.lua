@@ -7,6 +7,13 @@ local Util = require("ajans.util")
 ---@field cmd string[] Command to run the CLI tool
 ---@field env? table<string, string> Environment variables to set when running the command
 
+---@class ajans.cli.terminal.Opts: ajans.cli.session.CreateOpts
+---@field mux_backend string
+
+---@class ajans.cli.terminal.TmuxParent: ajans.cli.Session
+---@field tmux_pid? integer
+---@field pane_id fun(self:ajans.cli.terminal.TmuxParent):string?
+
 ---@class ajans.cli.Terminal: ajans.cli.Session
 ---@field opts ajans.win.Opts
 ---@field group integer
@@ -98,7 +105,7 @@ function M.sessions()
   return vim.tbl_values(M.terminals)
 end
 
----@param opts ajans.cli.session.Opts
+---@param opts ajans.cli.terminal.Opts
 function M.new(opts)
   assert(type(opts) == "table", "terminal sessions require opts")
   assert(opts.mux_backend and Session.backends[opts.mux_backend], "terminal sessions require a registered mux backend")
@@ -152,12 +159,18 @@ function M:authorize_automated_input(callback)
     callback(accepted == true and not self.closed)
   end
   local parent = self.parent
-  if not (self.fresh and parent and parent.backend == "tmux" and not parent.tmux_pid) then
+  local fresh_tmux = self.fresh and parent and parent.backend == "tmux"
+  if not fresh_tmux then
     if parent and parent.authorize_automated_input then
       parent:authorize_automated_input(complete)
     else
       complete(self:accepts_automated_input())
     end
+    return
+  end
+  ---@cast parent ajans.cli.terminal.TmuxParent
+  if parent.tmux_pid then
+    parent:authorize_automated_input(complete)
     return
   end
   local deadline = vim.uv.now() + TARGET_MAX_WAIT

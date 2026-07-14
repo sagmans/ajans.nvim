@@ -18,7 +18,7 @@ local M = {}
 ---@field env? table<string, string|false> Environment variables to set when running the command
 ---@field url? string Web URL to open when the tool is not installed
 ---@field keys? table<string, ajans.cli.Keymap|false>
----@field is_proc? (fun(self:ajans.cli.Tool, proc:ajans.cli.Proc):boolean)|string Regex or function to identity a running process
+---@field is_proc? (fun(self:ajans.cli.Tool, proc:ajans.cli.ProcessMatch):boolean)|string Regex or function to identify a running process
 ---@field mux_focus? boolean wether the tool needs to be focused in order to receive input
 ---@field format? fun(text:ajans.Text[], str:string):string?
 ---@field native_scroll? boolean whether the tool handles scrolling natively
@@ -189,11 +189,15 @@ function M.send(opts)
       text = {}
     end
   end
+  ---@cast text ajans.Text[]
 
   State.with(function(state)
     Util.exit_visual_mode()
     vim.schedule(function()
       local session = state.session
+      if not session then
+        return
+      end
       session:authorize_automated_input(function(accepted)
         if not accepted or not Session.owns(session) then
           Util.warn(("Refusing to send: `%s` is no longer the active session process"):format(state.tool.name))
