@@ -1869,6 +1869,86 @@ describe("herdr backend", function()
     assert.are.equal(200, session._authorized_pid)
   end)
 
+  it("times out fresh authorization exactly once", function()
+    local tool = test_tool({ name = "pi", cmd = { "pi" } })
+    tool.is_proc = function()
+      return false
+    end
+    local session = new_session({
+      tool = tool,
+      fresh = true,
+      herdr_agent = false,
+      herdr_pane_id = "pane-1",
+    })
+    session.fresh = true
+    Herdr._run = function()
+      return success({ process_info = { foreground_processes = { { pid = 100, cmdline = "zsh" } } } })
+    end
+    local now = 0
+    local deferred
+    local schedules = 0
+    local callbacks = 0
+    local accepted
+    vim.uv.now = function()
+      return now
+    end
+    vim.defer_fn = function(callback)
+      schedules = schedules + 1
+      deferred = callback
+      return schedules
+    end
+
+    session:authorize_automated_input(function(value)
+      callbacks = callbacks + 1
+      accepted = value
+    end)
+    assert.is_nil(accepted)
+    now = Herdr.INPUT_READY_TIMEOUT
+    deferred()
+
+    assert.is_false(accepted)
+    assert.is_false(session.fresh)
+    assert.are.equal(1, callbacks)
+    assert.are.equal(1, schedules)
+  end)
+
+  it("reports a readiness matcher exception without retrying", function()
+    local reports = {}
+    local tool = test_tool({ name = "pi", cmd = { "pi" } })
+    tool.is_proc = function()
+      error("broken matcher")
+    end
+    local session = new_session({
+      tool = tool,
+      fresh = true,
+      herdr_agent = false,
+      herdr_pane_id = "pane-1",
+    })
+    session.fresh = true
+    Herdr._run = function()
+      return success({ process_info = { foreground_processes = { { pid = 100, cmdline = "pi" } } } })
+    end
+    Util.error = function(message)
+      reports[#reports + 1] = message
+    end
+    local deferred = false
+    vim.defer_fn = function()
+      deferred = true
+      return 1
+    end
+    local accepted
+
+    session:authorize_automated_input(function(value)
+      accepted = value
+    end)
+
+    assert.is_false(accepted)
+    assert.is_false(session.fresh)
+    assert.is_false(deferred)
+    assert.are.equal(1, #reports)
+    assert.matches("broken matcher", reports[1])
+  end)
+
   for _, case in ipairs({
     { name = "transport error", response = completed("", 124, "timed out"), expected = false },
     { name = "malformed response", response = completed("not-json"), expected = false },
@@ -2039,6 +2119,48 @@ describe("herdr backend", function()
     assert.is_false(session:accepts_automated_input())
   end)
 
+  it("releases the input queue after a matcher exception", function()
+    local reports = {}
+    local throws = true
+    local sends = 0
+    local tool = test_tool({ name = "custom" })
+    tool.is_proc = function()
+      if throws then
+        throws = false
+        error("matcher failed")
+      end
+      return true
+    end
+    local session = new_session({
+      started = true,
+      herdr_agent = false,
+      herdr_terminal_id = "term-custom",
+      herdr_pane_id = "pane-custom",
+      tool = tool,
+      _authorized_pid = 42,
+    })
+    session._authorized_pid = 42
+    Herdr._run = function(cmd)
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = 42, cmdline = "custom" } } } })
+      end
+      sends = sends + 1
+      return completed()
+    end
+    Util.error = function(message)
+      reports[#reports + 1] = message
+    end
+
+    assert.is_false(session:send("first"))
+    assert.is_false(session._sending)
+    assert.are.same({}, session._input_queue)
+    assert.is_true(session:send("second"))
+
+    assert.are.equal(1, sends)
+    assert.are.equal(1, #reports)
+    assert.matches("matcher failed", reports[1])
+  end)
+
   it("does not submit Enter after a failed send", function()
     local calls = {}
     local session = new_session({
@@ -2068,7 +2190,7 @@ describe("herdr backend", function()
       herdr_terminal_id = "term-1",
       herdr_pane_id = "pane-1",
     })
-    local secret = string.rep("a", Herdr.SEND_CHUNK_BYTES) .. "€secret"
+    local secret = string.rep("a", Herdr.SEND_CHUNK_BYTES - 1) .. "€secret"
     Herdr._run = function(cmd)
       calls[#calls + 1] = vim.deepcopy(cmd)
       return #calls == 1 and success({ type = "ok" }) or failure("agent_send_failed", "gone")
@@ -2080,6 +2202,10 @@ describe("herdr backend", function()
     session:send(secret)
 
     assert.are.equal(2, #calls)
+    assert.are.equal(Herdr.SEND_CHUNK_BYTES - 1, #calls[1][5])
+    assert.matches("^€", calls[2][5])
+    assert.is_true(pcall(vim.str_utfindex, calls[1][5]))
+    assert.is_true(pcall(vim.str_utfindex, calls[2][5]))
     assert.are.equal(secret, calls[1][5] .. calls[2][5])
     assert.is_false(errors[1]:find("secret", 1, true) ~= nil)
     assert.matches("<redacted>", errors[1])

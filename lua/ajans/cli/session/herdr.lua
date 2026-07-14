@@ -941,7 +941,11 @@ function M:authorize_automated_input(callback)
   local deadline = vim.uv.now() + M.INPUT_READY_TIMEOUT
   local function check()
     local ok, accepted = pcall(self.accepts_automated_input, self)
-    if ok and accepted then
+    if not ok then
+      self.fresh = false
+      Util.error("Unable to authorize fresh Herdr input: " .. tostring(accepted))
+      callback(false)
+    elseif accepted then
       self.fresh = false
       callback(true)
     elseif vim.uv.now() >= deadline then
@@ -983,44 +987,56 @@ local function drain_input(self)
     return
   end
   self._sending = true
-  while #self._input_queue > 0 do
-    local operation = table.remove(self._input_queue, 1)
-    if operation.kind == "submit" then
-      if self._last_send_ok == false or (self._authorized_pid and not self:accepts_automated_input()) then
-        operation.ok = false
-      else
-        operation.ok = M.command({ "pane", "send-keys", self.herdr_pane_id, "enter" }) ~= nil
-      end
-      self._last_send_ok = nil
-    else
-      local ok = not self._authorized_pid or self:accepts_automated_input()
-      if self.tool.mux_focus and ok then
-        ok = M.command({ "pane", "send-keys", self.herdr_pane_id, "escape", "[", "I" }) ~= nil
-      end
-      for _, chunk in ipairs(ok and send_chunks(operation.text) or {}) do
-        if self._authorized_pid and not self:accepts_automated_input() then
-          ok = false
-          break
-        end
-        local result
-        if self.herdr_agent then
-          result = M.request({ "agent", "send", self.herdr_terminal_id, chunk }, { redact = true })
+  local operation
+  local ok, failure = xpcall(function()
+    while #self._input_queue > 0 do
+      operation = table.remove(self._input_queue, 1)
+      if operation.kind == "submit" then
+        if self._last_send_ok == false or (self._authorized_pid and not self:accepts_automated_input()) then
+          operation.ok = false
         else
-          result = M.command({ "pane", "send-text", self.herdr_pane_id, chunk }, { redact = true })
+          operation.ok = M.command({ "pane", "send-keys", self.herdr_pane_id, "enter" }) ~= nil
         end
-        if not result then
-          ok = false
-          break
+        self._last_send_ok = nil
+      else
+        local accepted = not self._authorized_pid or self:accepts_automated_input()
+        if self.tool.mux_focus and accepted then
+          accepted = M.command({ "pane", "send-keys", self.herdr_pane_id, "escape", "[", "I" }) ~= nil
+        end
+        for _, chunk in ipairs(accepted and send_chunks(operation.text) or {}) do
+          if self._authorized_pid and not self:accepts_automated_input() then
+            accepted = false
+            break
+          end
+          local result
+          if self.herdr_agent then
+            result = M.request({ "agent", "send", self.herdr_terminal_id, chunk }, { redact = true })
+          else
+            result = M.command({ "pane", "send-text", self.herdr_pane_id, chunk }, { redact = true })
+          end
+          if not result then
+            accepted = false
+            break
+          end
+        end
+        operation.ok = accepted
+        self._last_send_ok = accepted
+        if not accepted then
+          self._input_queue = {}
         end
       end
-      operation.ok = ok
-      self._last_send_ok = ok
-      if not ok then
-        self._input_queue = {}
-      end
+      operation = nil
     end
-  end
+  end, debug.traceback)
   self._sending = false
+  if not ok then
+    if operation then
+      operation.ok = false
+    end
+    self._last_send_ok = false
+    self._input_queue = {}
+    pcall(Util.error, "Failed to deliver Herdr input: " .. tostring(failure))
+  end
 end
 
 ---@param text string

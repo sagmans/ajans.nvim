@@ -282,6 +282,8 @@ describe("session mux", function()
         tool = test_tool(),
         herdr_name = "ajans:claude expected",
         _authorized_pid = 42,
+        _authorized_process = { pid = 42, start_time = "start-1" },
+        fresh = true,
       },
       priority = 100,
       is_running = function()
@@ -300,6 +302,8 @@ describe("session mux", function()
     assert.are.equal(wrapper, states[1].session)
     assert.are.equal("herdr terminal-1", wrapper.parent.id)
     assert.are.equal(42, wrapper.parent._authorized_pid)
+    assert.are.same({ pid = 42, start_time = "start-1" }, wrapper.parent._authorized_process)
+    assert.is_true(wrapper.parent.fresh)
   end)
 
   it("preserves authorized process identity across matching refreshes", function()
@@ -328,12 +332,16 @@ describe("session mux", function()
       backend = "herdr",
       herdr_name = "ajans:claude expected",
       _authorized_pid = 42,
+      _authorized_process = { pid = 42, start_time = "start-1" },
+      fresh = true,
       detach = function() end,
     }
 
     Session.sessions()
 
     assert.are.equal(42, Session._attached["herdr terminal-1"]._authorized_pid)
+    assert.are.same({ pid = 42, start_time = "start-1" }, Session._attached["herdr terminal-1"]._authorized_process)
+    assert.is_true(Session._attached["herdr terminal-1"].fresh)
   end)
 
   it("detaches a terminal wrapper when its stable pane changes tools", function()
