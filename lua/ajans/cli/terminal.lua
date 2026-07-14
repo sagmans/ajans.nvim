@@ -407,19 +407,19 @@ function M:on_ready()
     vim.schedule(function()
       self:authorize_automated_input(function(accepted)
         vim.schedule(function()
-          if accepted and self:is_running() then
+          local delivered = accepted and self:is_running()
+          if delivered then
             if self.parent and self.parent.send then
-              if next == "\r" then
-                self.parent:submit()
-              else
-                self.parent:send(next)
-              end
+              local ok = next == "\r" and self.parent:submit() or self.parent:send(next)
+              delivered = ok ~= false
             else
               vim.api.nvim_chan_send(self.job, next)
             end
-            if self:is_focused() then
-              vim.cmd.startinsert()
-            end
+          end
+          if delivered and self:is_focused() then
+            vim.cmd.startinsert()
+          elseif not delivered then
+            self.send_queue = {}
           end
           self._sending = false
         end)

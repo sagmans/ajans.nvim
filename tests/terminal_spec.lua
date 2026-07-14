@@ -80,7 +80,7 @@ describe("terminal", function()
     end
     local terminal = setmetatable({
       job = 42,
-      send_queue = { "secret" },
+      send_queue = { "secret", "\r" },
       timer = {
         start = function(_, _, _, callback)
           callback()
@@ -106,6 +106,7 @@ describe("terminal", function()
     assert.is_false(sent)
     authorization(false)
     assert.is_false(sent)
+    assert.are.same({}, terminal.send_queue)
   end)
 
   it("authorizes a fresh tmux prompt only after resolving the target process", function()
