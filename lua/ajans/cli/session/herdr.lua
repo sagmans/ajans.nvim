@@ -22,6 +22,8 @@ M.STARTUP_INTERVAL = 100
 M.COMMAND_TIMEOUT = 5000
 M.LIVENESS_TIMEOUT = 250
 M.LIVENESS_ERROR_INTERVAL = 30000
+M.INPUT_READY_TIMEOUT = 5000
+M.INPUT_READY_INTERVAL = 100
 M.DISCOVERY_TIMEOUT = 5000
 M.PROCESS_INFO_CONCURRENCY = 8
 M.MAX_DUMP_LINES = 1000
@@ -405,7 +407,6 @@ function M.ensure_server()
 end
 
 M.tool_name_for_label = Discovery.tool_name_for_label
-local process_pids = Discovery.process_pids
 local to_proc = Discovery.to_proc
 
 ---@param pane table
@@ -556,8 +557,10 @@ function M:set_agent(agent, placement)
   self.herdr_placement = placement
   self.mux_session = agent.workspace_id
   self.cwd = agent.foreground_cwd or agent.cwd or self.cwd
-  local info = pane_process_info({ pane_id = agent.pane_id })
-  self.pids = process_pids(info)
+  -- Herdr may report the bootstrap shell before the launched tool takes over.
+  -- Leave first authorization unpinned; the exact tool process is pinned then.
+  self.pids = {}
+  self.fresh = true
   self.started = true
   self.external = placement ~= "workspace"
   self.priority = self.external and 10 or 50
@@ -926,6 +929,29 @@ function M:accepts_automated_input()
     end
   end
   return pane_runs_expected_tool(self)
+end
+
+---@param callback fun(accepted:boolean)
+function M:authorize_automated_input(callback)
+  if not self.fresh then
+    callback(self:accepts_automated_input())
+    return
+  end
+
+  local deadline = vim.uv.now() + M.INPUT_READY_TIMEOUT
+  local function check()
+    local ok, accepted = pcall(self.accepts_automated_input, self)
+    if ok and accepted then
+      self.fresh = false
+      callback(true)
+    elseif vim.uv.now() >= deadline then
+      self.fresh = false
+      callback(false)
+    else
+      vim.defer_fn(check, M.INPUT_READY_INTERVAL)
+    end
+  end
+  check()
 end
 
 ---@param text string

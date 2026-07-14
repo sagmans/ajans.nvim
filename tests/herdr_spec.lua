@@ -106,6 +106,8 @@ describe("herdr backend", function()
   local original_tab_id
   local original_pane_id
   local original_environ
+  local original_defer_fn
+  local original_now
 
   before_each(function()
     original_executable = vim.fn.executable
@@ -144,6 +146,8 @@ describe("herdr backend", function()
     original_tab_id = vim.env.HERDR_TAB_ID
     original_pane_id = vim.env.HERDR_PANE_ID
     original_environ = vim.fn.environ
+    original_defer_fn = vim.defer_fn
+    original_now = vim.uv.now
     vim.fn.has = function()
       return 0
     end
@@ -180,6 +184,8 @@ describe("herdr backend", function()
     vim.env.HERDR_TAB_ID = original_tab_id
     vim.env.HERDR_PANE_ID = original_pane_id
     vim.fn.environ = original_environ
+    vim.defer_fn = original_defer_fn
+    vim.uv.now = original_now
     pcall(vim.api.nvim_del_user_command, "Ajans")
   end)
 
@@ -1004,7 +1010,7 @@ describe("herdr backend", function()
     assert.are.equal("herdr term-agent", session.id)
     assert.are.equal("herdr:term-agent", session.identity)
     assert.are.equal("agent-pane", session.herdr_pane_id)
-    assert.are.same({ 100, 101 }, session.pids)
+    assert.are.same({}, session.pids)
     assert.is_true(session.started)
     assert.is_false(session.external)
 
@@ -1813,6 +1819,54 @@ describe("herdr backend", function()
     assert.is_false(session:send("prompt"))
     assert.is_false(session:submit())
     assert.are.equal(0, calls)
+  end)
+
+  it("authorizes the launched tool after its bootstrap process exits", function()
+    local tool = test_tool({ name = "pi", cmd = { "pi" } })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "pi"
+    end
+    local session = new_session({ tool = tool })
+    local phase = "bootstrap"
+    Herdr._run = function(cmd)
+      if cmd[2] == "agent" and cmd[3] == "get" then
+        return success({ agent = { terminal_id = "term-1", pane_id = "pane-1", name = session.herdr_name } })
+      end
+      assert.are.same({ "herdr", "pane", "process-info", "--pane", "pane-1" }, cmd)
+      if phase == "bootstrap" then
+        return success({
+          process_info = { shell_pid = 100, foreground_processes = { { pid = 101, cmdline = "zsh" } } },
+        })
+      end
+      return success({ process_info = { shell_pid = 100, foreground_processes = { { pid = 200, cmdline = "pi" } } } })
+    end
+
+    session:set_agent({
+      terminal_id = "term-1",
+      pane_id = "pane-1",
+      workspace_id = "workspace-1",
+      tab_id = "tab-1",
+    }, "split")
+    local deferred
+    local accepted
+    vim.uv.now = function()
+      return 0
+    end
+    vim.defer_fn = function(callback)
+      deferred = callback
+      return 1
+    end
+
+    session:authorize_automated_input(function(value)
+      accepted = value
+    end)
+    assert.is_nil(accepted)
+    assert.is_function(deferred)
+
+    phase = "ready"
+    deferred()
+    assert.is_true(accepted)
+    assert.are.equal(200, session._authorized_pid)
   end)
 
   for _, case in ipairs({
