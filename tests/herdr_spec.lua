@@ -1699,7 +1699,9 @@ describe("herdr backend", function()
     end
     Util.error = function() end
 
-    assert.is_nil(session:attach())
+    local cmd, accepted = session:attach()
+    assert.is_nil(cmd)
+    assert.is_false(accepted)
   end)
 
   it("keeps external Herdr tabs and splits outside the Neovim terminal wrapper", function()

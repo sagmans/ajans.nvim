@@ -345,7 +345,11 @@ function M.attach(session)
   local started = session.started == true
   local fresh = not started
   if started then
-    cmd = session:attach()
+    local accepted
+    cmd, accepted = session:attach()
+    if accepted == false then
+      return session
+    end
   else
     cmd, started = session:start()
   end

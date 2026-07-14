@@ -789,7 +789,7 @@ function M:attach()
   local _, transport_error = Client.trusted_socket()
   if transport_error then
     Util.error("Refusing to attach through an untrusted Herdr transport: " .. transport_error)
-    return
+    return nil, false
   end
   if self.herdr_agent then
     return { cmd = { "herdr", "agent", "attach", self.herdr_terminal_id } }

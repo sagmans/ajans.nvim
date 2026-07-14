@@ -508,6 +508,23 @@ describe("session mux", function()
     assert.is_false(parent:is_attached())
   end)
 
+  it("does not record a refused existing attachment", function()
+    local backend = {}
+    backend.__index = backend
+    function backend:attach()
+      return nil, false
+    end
+    Session.backends = {}
+    Session.register("herdr", backend)
+    Session.backend = "herdr"
+    local parent = Session.new({ tool = test_tool(), cwd = vim.uv.cwd(), started = true })
+
+    local returned = Session.attach(parent)
+
+    assert.are.equal(parent, returned)
+    assert.are.same({}, Session._attached)
+  end)
+
   it("does not report a failed backend creation as attached", function()
     local backend = {}
     backend.__index = backend
