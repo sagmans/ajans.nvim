@@ -1,7 +1,17 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 local Commands = require("ajans.commands")
 local Util = require("ajans.util")
+
+---@class tests.commands.Line
+---@field args string
+---@field range? integer
+
+---@class tests.commands.Runner
+---@field cmd fun(line:tests.commands.Line)
+local CommandRunner = Commands --[[@as tests.commands.Runner]]
 
 local function capture_errors()
   local errors = {}
@@ -106,7 +116,9 @@ describe("commands", function()
         name = "resolves nested command",
         input = "cli show name=copilot",
         expect_command = function()
-          return Commands.commands.cli.show
+          local cli = Commands.commands.cli
+          assert(type(cli) == "table")
+          return rawget(cli, "show")
         end,
         expected_args = { name = "copilot" },
       },
@@ -232,7 +244,7 @@ describe("commands", function()
     for _, case in ipairs(cases) do
       it(case.name, function()
         local errors, restore = capture_errors()
-        Commands.cmd({ args = case.input })
+        CommandRunner.cmd({ args = case.input })
         restore()
 
         assert.are.same(case.expected_calls, calls or {})

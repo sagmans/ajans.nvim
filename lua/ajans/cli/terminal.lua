@@ -668,7 +668,7 @@ function M:keys(buf)
         local mode = km.mode or "t"
         mode = type(mode) == "table" and table.concat(mode, "") or mode --[[@as string]]
         mode = vim.split(mode, "", { plain = true })
-        local km_opts = vim.deepcopy(km) ---@type vim.keymap.set.Opts
+        local km_opts = vim.deepcopy(km) ---@type ajans.keymap.set.Opts
         ---@diagnostic disable-next-line: inject-field, no-unknown
         km_opts.mode, km_opts[1], km_opts[2] = nil, nil, nil
         km_opts.silent = km_opts.silent ~= false

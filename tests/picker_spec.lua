@@ -1,4 +1,33 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
+
+local Select = require("ajans.cli.ui.select")
+
+---@class tests.picker.Tool
+---@field name string
+
+---@class tests.picker.Session
+---@field cwd string
+---@field backend string
+---@field mux_backend? string
+---@field mux_session? string
+
+---@class tests.picker.State
+---@field idx? integer
+---@field installed? boolean
+---@field started? boolean
+---@field external? boolean
+---@field tool tests.picker.Tool
+---@field session? tests.picker.Session
+
+---@class tests.picker.Picker
+---@field count fun(self:tests.picker.Picker):integer
+
+---@class tests.picker.SelectApi
+---@field format fun(state:tests.picker.State, picker?:tests.picker.Picker):snacks.picker.Highlight[]
+---@field select fun(opts:{filter:ajans.cli.Filter})
+local SelectDouble = Select --[[@as tests.picker.SelectApi]]
 
 describe("cli picker", function()
   local original_snacks
@@ -40,7 +69,6 @@ describe("cli picker", function()
   end)
 
   it("formats snacks picker items through state fallback", function()
-    local Select = require("ajans.cli.ui.select")
     package.loaded.snacks = {
       picker = {
         format = {
@@ -52,7 +80,7 @@ describe("cli picker", function()
       },
     }
 
-    local ret = Select.format({
+    local ret = SelectDouble.format({
       idx = 1,
       installed = true,
       tool = { name = "claude" },
@@ -90,7 +118,7 @@ describe("cli picker", function()
     },
   }) do
     it("formats " .. case.name .. " identity", function()
-      local parts = require("ajans.cli.ui.select").format(case.state)
+      local parts = SelectDouble.format(case.state)
       local text = table.concat(vim.tbl_map(function(part)
         return part[1]
       end, parts))
@@ -108,13 +136,13 @@ describe("cli picker", function()
         return item.name
       end,
     }
-    _G.Snacks = {
+    rawset(_G, "Snacks", {
       picker = {
         pick = function(_, opts)
           confirm = opts.confirm
         end,
       },
-    }
+    })
 
     SnacksPicker.open("files", function()
       called = true
@@ -136,7 +164,7 @@ describe("cli picker", function()
 
   it("validates required select options", function()
     local ok, err = pcall(function()
-      require("ajans.cli.ui.select").select({ filter = {} })
+      SelectDouble.select({ filter = {} })
     end)
 
     assert.is_false(ok)

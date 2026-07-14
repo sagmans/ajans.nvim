@@ -37,8 +37,13 @@ local M = {}
 ---@class ajans.cli.Send: ajans.cli.Show,ajans.cli.Message
 ---@field submit? boolean
 
+--- Neovim 0.11 names this supported compatibility field `buffer`; 0.12
+--- metadata uses `buf` while retaining `buffer` at runtime through 0.14.
+---@class ajans.keymap.set.Opts: vim.keymap.set.Opts
+---@field buffer? integer
+
 --- Keymap options similar to `vim.keymap.set` and `lazy.nvim` mappings
----@class ajans.cli.Keymap: vim.keymap.set.Opts
+---@class ajans.cli.Keymap: ajans.keymap.set.Opts
 ---@field [1] string keymap
 ---@field [2] string|ajans.cli.Action
 ---@field mode? string|string[]

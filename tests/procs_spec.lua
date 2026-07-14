@@ -1,4 +1,6 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 local Procs = require("ajans.cli.procs")
 local Tmux = require("ajans.cli.session.tmux")
@@ -126,9 +128,11 @@ describe("process inventory", function()
 
     local procs = Procs.new({ force_proc = true, proc_root = PROC_ROOT })
     local current = procs:get(42)
+    if not current then
+      error("expected process fixture", 2)
+    end
 
     assert.is_true(procs:is_complete())
-    assert.is_table(current)
     assert.are.equal("fixture-agent", current.cmd)
     assert.are.equal("12345", current.start_time)
     assert.are.equal(42, current.pgid)

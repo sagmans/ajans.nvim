@@ -1,4 +1,5 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
 
 local Util = require("ajans.util")
 

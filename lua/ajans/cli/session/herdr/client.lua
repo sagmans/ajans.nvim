@@ -2,6 +2,16 @@ local bit = require("bit")
 
 local M = {}
 
+--- Luv accepts this minimal spawn shape, but its LuaLS metadata currently
+--- marks every platform-specific option as required.
+---@class ajans.uv.SpawnOptions
+---@field args string[]
+---@field detached boolean
+---@field env string[]
+---@field stdio uv.spawn.options.stdio[]
+
+---@alias ajans.uv.Spawn fun(path:string, options:ajans.uv.SpawnOptions, on_exit:uv.spawn.on_exit):(uv.uv_process_t?, integer|string?)
+
 M.TIMEOUT = 5000
 M.MAX_RESPONSE_BYTES = 1024 * 1024
 M._request_id = 0
@@ -336,7 +346,8 @@ end
 function M.spawn_server()
   local handle
   local spawn_error
-  handle, spawn_error = vim.uv.spawn("herdr", {
+  local spawn = vim.uv.spawn --[[@as ajans.uv.Spawn]]
+  handle, spawn_error = spawn("herdr", {
     args = { "server" },
     detached = true,
     env = M.server_env(),

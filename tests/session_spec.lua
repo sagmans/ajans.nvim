@@ -1,15 +1,129 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 local Config = require("ajans.config")
-local Session = require("ajans.cli.session")
+local SessionModule = require("ajans.cli.session")
 local State = require("ajans.cli.state")
 local Util = require("ajans.util")
+
+---@class tests.session.Tool
+---@field name string
+---@field cmd string[]
+---@field env? table<string,string|false>
+---@field config? {env?:table<string,string|false>}
+---@field clone? fun(self:tests.session.Tool, opts?:table):tests.session.Tool
+
+---@class tests.session.Attached
+---@field id string
+---@field sid? string
+---@field identity? string
+---@field cwd? string
+---@field tool? tests.session.Tool
+---@field backend? string
+---@field priority? integer
+---@field started? boolean
+---@field external? boolean
+---@field parent? tests.session.Attached
+---@field mux_backend? string
+---@field mux_session? string
+---@field mux_identity? string
+---@field herdr_name? string
+---@field pids? integer[]
+---@field fresh? boolean
+---@field _authorized_pid? integer
+---@field _authorized_process? ajans.cli.ProcessIdentity
+---@field is_running? fun(self:tests.session.Attached):boolean
+---@field is_running_async? fun(self:tests.session.Attached, callback:fun(running:boolean))
+---@field detach? fun(self:tests.session.Attached)
+
+---@class tests.session.Runtime: tests.session.Attached
+---@field id string
+---@field sid string
+---@field identity? string
+---@field cwd string
+---@field tool tests.session.Tool
+---@field backend string
+---@field priority integer
+---@field started? boolean
+---@field external? boolean
+---@field parent? tests.session.Attached
+---@field mux_backend? string
+---@field mux_session? string
+---@field mux_identity? string
+---@field tmux_pane_id? string
+---@field tmux_pid? integer
+---@field fresh? boolean
+---@field start fun(self:tests.session.Runtime):(ajans.cli.terminal.Cmd?, boolean?)
+---@field attach fun(self:tests.session.Runtime):ajans.cli.terminal.Cmd?
+---@field is_attached fun(self:tests.session.Runtime):boolean
+
+---@class tests.session.CreateOpts
+---@field tool tests.session.Tool
+---@field cwd? string
+---@field backend? string
+---@field started? boolean
+
+---@class tests.session.Backend
+
+---@class tests.session.Api
+---@field backends table<string,tests.session.Backend>
+---@field did_setup boolean
+---@field backend? string
+---@field _attached table<string,tests.session.Attached>
+---@field resolve_backend fun(opts?:ajans.cli.session.ResolveOpts):string
+---@field register fun(name:string, backend:tests.session.Backend)
+---@field setup fun()
+---@field selected_backend fun():string
+---@field new fun(opts:tests.session.CreateOpts):tests.session.Runtime
+---@field sessions fun():tests.session.Runtime[]
+---@field attach fun(session:tests.session.Runtime):tests.session.Runtime
+---@field detach fun(session:tests.session.Attached):tests.session.Attached
+---@field attached_async fun(callback:fun(sessions:table<string,tests.session.Attached>))
+local Session = SessionModule --[[@as tests.session.Api]]
+
+---@class tests.session.ProductionRegistrationApi
+---@field register fun(name:string, backend:ajans.cli.Session)
+local ProductionSession = SessionModule --[[@as tests.session.ProductionRegistrationApi]]
+
+---@class tests.session.StateApi
+---@field get_state fun(session:tests.session.Runtime):ajans.cli.State
+local TestState = State --[[@as tests.session.StateApi]]
+
+---@class tests.session.TerminalOpts
+---@field tool? tests.session.Tool
+---@field cwd? string
+---@field id? string
+---@field mux_backend? string
+---@field mux_session? string
+---@field mux_identity? string
+---@field parent? {dump?:fun()}
+
+---@class tests.session.TerminalApi
+---@field terminals table<string,tests.session.Runtime>
+---@field new fun(opts?:tests.session.TerminalOpts):tests.session.Runtime
+
+---@return tests.session.TerminalApi
+local function terminal_api()
+  return require("ajans.cli.terminal") --[[@as tests.session.TerminalApi]]
+end
+
+---@generic T
+---@param value T?
+---@return T
+local function present(value)
+  if value == nil then
+    error("expected session fixture", 2)
+  end
+  return value
+end
 
 local function setup_config(opts)
   pcall(vim.api.nvim_del_user_command, "Ajans")
   Config.setup(opts)
 end
 
+---@return tests.session.Tool
 local function test_tool()
   local tool = { name = "claude", cmd = { "claude" } }
   function tool:clone(opts)
@@ -433,7 +547,7 @@ describe("session mux", function()
 
   it("reports attached tmux terminal wrappers through state refresh", function()
     setup_config()
-    local Terminal = require("ajans.cli.terminal")
+    local Terminal = terminal_api()
     Terminal.terminals = {}
     local terminal = Terminal.new({
       tool = test_tool(),
@@ -459,7 +573,7 @@ describe("session mux", function()
     setup_config()
 
     local ok, err = pcall(function()
-      require("ajans.cli.terminal").new()
+      terminal_api().new()
     end)
 
     assert.is_false(ok)
@@ -470,7 +584,7 @@ describe("session mux", function()
     setup_config()
 
     local ok, err = pcall(function()
-      require("ajans.cli.terminal").new({
+      terminal_api().new({
         tool = test_tool(),
         cwd = vim.uv.cwd(),
       })
@@ -483,7 +597,7 @@ describe("session mux", function()
   it("accepts Herdr terminal wrappers", function()
     setup_config({ cli = { mux = { backend = "herdr" } } })
     Session.register("herdr", {})
-    local Terminal = require("ajans.cli.terminal")
+    local Terminal = terminal_api()
     Terminal.terminals = {}
 
     local terminal = Terminal.new({
@@ -548,7 +662,7 @@ describe("session mux", function()
       messages[#messages + 1] = message
     end
 
-    local state, attached = State.attach(State.get_state(parent))
+    local state, attached = State.attach(TestState.get_state(parent))
 
     assert.is_false(attached)
     assert.is_false(state.attached)
@@ -715,7 +829,7 @@ describe("session mux", function()
         completed = sessions
       end)
       for _, id in ipairs(order) do
-        callbacks[id](id == "live")
+        present(callbacks[id])(id == "live")
       end
 
       assert.are.same({ live = live }, completed)
@@ -759,10 +873,10 @@ describe("session mux", function()
     local attached = Session.attach(parent)
 
     assert.are.equal(1, started)
-    assert.are.equal("terminal: " .. parent.identity, attached.id)
+    assert.are.equal("terminal: " .. present(parent.identity), attached.id)
     assert.are.equal("tmux", attached.mux_backend)
     assert.are.equal(parent.mux_session, attached.mux_session)
-    assert.are.equal(parent.identity, attached.mux_identity)
+    assert.are.equal(present(parent.identity), attached.mux_identity)
     assert.are.equal(parent.external, attached.external)
     assert.is_true(attached.fresh)
     assert.are.equal(parent, attached.parent)
@@ -777,10 +891,10 @@ describe("session mux", function()
     vim.env.TMUX = nil
     setup_config({ cli = { mux = { create = "terminal" } } })
     Session.backends = {}
-    Session.register("tmux", require("ajans.cli.session.tmux"))
+    ProductionSession.register("tmux", require("ajans.cli.session.tmux"))
 
     local session = Session.new({ tool = test_tool(), cwd = cwd })
-    local cmd = session:start()
+    local cmd = present(session:start())
 
     assert.is_nil(session.external)
     assert.are.equal("tmux", cmd.cmd[1])
@@ -794,10 +908,10 @@ describe("session mux", function()
     vim.env.TMUX = "/tmp/tmux-1000/default,1,0"
     setup_config({ cli = { mux = { create = "terminal" } } })
     Session.backends = {}
-    Session.register("tmux", require("ajans.cli.session.tmux"))
+    ProductionSession.register("tmux", require("ajans.cli.session.tmux"))
 
     local session = Session.new({ tool = test_tool(), cwd = cwd })
-    local cmd = session:start()
+    local cmd = present(session:start())
 
     assert.is_false(session.external)
     assert.are.equal("tmux", cmd.cmd[1])
@@ -812,7 +926,7 @@ describe("session mux", function()
     vim.env.TMUX = "/tmp/tmux-1000/default,1,0"
     setup_config({ cli = { mux = { create = "window" } } })
     Session.backends = {}
-    Session.register("tmux", require("ajans.cli.session.tmux"))
+    ProductionSession.register("tmux", require("ajans.cli.session.tmux"))
     Util.exec = function(cmd, opts)
       exec_calls[#exec_calls + 1] = { cmd = vim.deepcopy(cmd), opts = vim.deepcopy(opts or {}) }
       return { ("$1:%%2:4321:main:%s"):format(cwd) }
@@ -843,7 +957,7 @@ describe("session mux", function()
       vim.env.TMUX = "/tmp/tmux-1000/default,1,0"
       setup_config({ cli = { mux = { create = "split", split = case.split } } })
       Session.backends = {}
-      Session.register("tmux", require("ajans.cli.session.tmux"))
+      ProductionSession.register("tmux", require("ajans.cli.session.tmux"))
       Util.exec = function(cmd, opts)
         exec_calls[#exec_calls + 1] = { cmd = vim.deepcopy(cmd), opts = vim.deepcopy(opts or {}) }
         return { ("$1:%%3:4322:main:%s"):format(cwd) }
