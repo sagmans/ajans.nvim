@@ -4,7 +4,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **cli:** replace legacy multiplexer options with `cli.mux.backend = "auto" | "tmux" | "herdr"`; `auto` may select a running Herdr server instead of tmux
+* **cli:** replace legacy multiplexer options with `cli.mux.backend = "auto" | "tmux" | "herdr"`; `cli.mux.enabled` is removed and ignored, with no backend-disable value. Remove Ajans CLI mappings and avoid its CLI commands when session integration is not wanted. `auto` may select a running Herdr server instead of tmux
 * **cli:** preserve tmux scrollback and split settings while enforcing Herdr's 1-1000 line and 0.1-0.9 layout limits in its adapter
 * **cli:** replace bundled `gemini` tool with `antigravity` (`agy` binary). Rename `cli.tools.gemini` to `cli.tools.antigravity` in your config; install the [Antigravity CLI](https://antigravity.google) instead of Gemini CLI. Existing sessions keyed to `gemini` will not attach as `antigravity`.
 

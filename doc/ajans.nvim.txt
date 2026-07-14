@@ -45,8 +45,8 @@ REQUIREMENTS                        *ajans.nvim-ajans.nvim-requirements*
   context variables (optional)
 - tmux, or Herdr >= 0.7.0 on macOS/Linux, for persistent CLI sessions
 - AI CLI tools such as Codex, Claude, Copilot, Antigravity, etc. (optional)
-- lsof and ps with tmux on Unix-like systems for running-session discovery
-  (optional, but recommended)
+- With tmux: Linux uses ps or /proc for discovery; other Unix systems use ps
+  for discovery and optionally lsof for working-directory detection
 
 QUICK START                          *ajans.nvim-ajans.nvim-quick-start*
 
@@ -110,10 +110,13 @@ AI CLI INTEGRATION            *ajans.nvim-ajans.nvim-ai-cli-integration*
 Ajans runs local AI CLI tools through tmux or Herdr so sessions persist across
 Neovim windows and restarts. Backend `auto` prefers the multiplexer hosting
 Neovim, then a running Herdr server, the sole usable backend, and tmux as
-the compatibility tie-breaker. When needed, Ajans opens a lightweight Neovim
-terminal wrapper attached to the persistent session. Helper prompts can
-include locations, selections, diagnostics, quickfix entries, buffers,
-functions, and classes.
+the compatibility tie-breaker. A sole installed Herdr is selected even when
+invalid so health can explain why. When needed, Ajans opens a lightweight Neovim
+terminal wrapper attached to the persistent session. A compatible Herdr server
+remains usable when restart is recommended. Ajans-started Herdr servers receive
+a strict system/runtime environment allowlist; current project variables are
+sent only with each agent launch. Helper prompts can include locations,
+selections, diagnostics, quickfix entries, buffers, functions, and classes.
 
 API summary:
 
@@ -165,7 +168,8 @@ Lua equivalent:
 STATUSLINE INTEGRATION    *ajans.nvim-ajans.nvim-statusline-integration*
 
 Use `require("ajans.status").cli()` to list active CLI sessions in your
-statusline.
+statusline. Entries contain `id`, `tool`, `cwd`, `backend`, `external`,
+`terminal`, and optional stable `identity`.
 
 Example:
 
@@ -196,8 +200,9 @@ CLI tools not starting? ~
 Terminal sessions not persisting? ~
 
 Run `:checkhealth ajans` and install the selected backend. Use tmux or Herdr
->= 0.7.0 on macOS/Linux. Set `cli.mux.backend` explicitly if auto-selection
-chose the wrong installed backend.
+>= 0.7.0 on macOS/Linux. Herdr health also validates its owner-only local API
+socket. Set `cli.mux.backend` explicitly if auto-selection chose the wrong
+installed backend.
 
 Do I need a GitHub Copilot subscription? ~
 

@@ -26,7 +26,7 @@ Ajans supports tmux and [Herdr](https://herdr.dev) as full session backends. AI 
 - One or more AI CLI tools, such as Claude, Codex, Copilot, Antigravity, Opencode, or Qwen
 - Optional: [snacks.nvim](https://github.com/folke/snacks.nvim), Telescope, or fzf-lua for picker workflows
 - Optional: [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects) for `{function}` and `{class}` context
-- Optional with tmux on Unix-like systems: `ps` and `lsof` for running-session discovery
+- Optional with tmux: Linux uses `ps` or `/proc` for process discovery and `/proc` for working directories; other Unix systems use `ps` for discovery and optionally `lsof` for working directories
 
 ## Install
 

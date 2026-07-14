@@ -78,8 +78,8 @@ local defaults = {
     },
     ---@class ajans.cli.Mux
     mux = {
-      -- auto: prefer the usable multiplexer hosting Neovim, then a running Herdr server,
-      -- the sole usable backend, or tmux when both/neither are usable.
+      -- auto: prefer the usable multiplexer hosting Neovim, then a running Herdr server.
+      -- A sole installed Herdr is selected even when invalid so health can report why.
       backend = "auto", ---@type "auto"|"tmux"|"herdr"
       -- terminal: sessions will be attached inside a Neovim terminal
       -- window: create a tmux window or Herdr tab when hosted by the backend
@@ -177,7 +177,7 @@ Controls the Neovim terminal wrapper used to attach to tmux or Herdr sessions.
 
 Controls backend selection and session placement.
 
-- `backend = "auto"`: prefer a usable Herdr when it hosts Neovim, then a usable tmux when it hosts Neovim, then an already-running compatible Herdr server, the sole usable backend, and finally tmux as the compatibility fallback
+- `backend = "auto"`: prefer a usable Herdr when it hosts Neovim, then a usable tmux when it hosts Neovim, then an already-running compatible Herdr server, the sole usable backend, and finally tmux as the compatibility fallback. A sole installed Herdr is selected even when invalid so health can report why.
 - `backend = "tmux"` or `"herdr"`: select that backend explicitly
 - `create = "terminal"`: attach the persistent session inside a Neovim terminal
 - `create = "window"`: when hosted by the backend, create a tmux window or Herdr tab
@@ -185,7 +185,7 @@ Controls backend selection and session placement.
 - `split.vertical` and `split.size`: external split direction and size; values at or below `1` are fractions, and larger values are terminal cells. Herdr validates that the result stays within its supported `0.1`-`0.9` layout range.
 - `dump`: requested scrollback lines. tmux keeps the configured value; Herdr clamps reads to its `1`-`1000` line limit.
 
-Herdr requires version `>= 0.7.0` on macOS or Linux. Herdr commands inherit `HERDR_SESSION` and `HERDR_SOCKET_PATH`, so named Herdr sessions work without extra Ajans configuration. Native Herdr tab/split creation also requires the `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID` values exported by Herdr; `create = "terminal"` does not.
+Herdr requires version `>= 0.7.0` on macOS or Linux. Herdr commands inherit `HERDR_SESSION` and `HERDR_SOCKET_PATH`, so named Herdr sessions work without extra Ajans configuration. Native Herdr tab/split creation also requires the `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID` values exported by Herdr; `create = "terminal"` does not. A compatible server remains usable when Herdr recommends restart. Ajans-started servers receive a strict system/runtime environment allowlist; arbitrary project variables are sent only with each agent launch and do not persist in the shared server.
 
 ### `cli.tools`
 

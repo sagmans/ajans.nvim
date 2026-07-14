@@ -58,8 +58,8 @@ local defaults = {
     },
     ---@class ajans.cli.Mux
     mux = {
-      -- auto: prefer the usable multiplexer hosting Neovim, then a running Herdr server,
-      -- the sole usable backend, or tmux when both/neither are usable.
+      -- auto: prefer the usable multiplexer hosting Neovim, then a running Herdr server.
+      -- A sole installed Herdr is selected even when invalid so health can report why.
       backend = "auto", ---@type "auto"|"tmux"|"herdr"
       -- terminal: sessions will be attached inside a Neovim terminal
       -- window: create a tmux window or Herdr tab when hosted by the backend
