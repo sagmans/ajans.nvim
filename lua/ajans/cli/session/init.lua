@@ -73,8 +73,8 @@ B.__index = B
 B.priority = 0
 
 --- Send text to the session
----@param _text string
-function B:send(_text)
+---@param _ string
+function B:send(_)
   error("Backend:send() not implemented")
 end
 

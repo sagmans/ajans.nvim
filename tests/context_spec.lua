@@ -1,7 +1,20 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 local Config = require("ajans.config")
 local Context = require("ajans.cli.context")
+local Quickfix = require("ajans.cli.context.quickfix")
+
+---@generic T
+---@param value T?
+---@return T
+local function present(value)
+  if value == nil then
+    error("expected a value", 2)
+  end
+  return value
+end
 
 describe("context module", function()
   local buf, win
@@ -93,8 +106,7 @@ describe("context module", function()
       vim.cmd("normal! v")
       vim.api.nvim_win_set_cursor(win, { 1, 5 })
 
-      local selection = Context.selection(buf)
-      assert.is_not_nil(selection)
+      local selection = present(Context.selection(buf))
       assert.are.equal("char", selection.kind)
       assert.are.same({ 1, 0 }, selection.from)
       assert.are.same({ 1, 5 }, selection.to)
@@ -108,8 +120,7 @@ describe("context module", function()
       vim.cmd("normal! V")
       vim.api.nvim_win_set_cursor(win, { 2, 0 })
 
-      local selection = Context.selection(buf)
-      assert.is_not_nil(selection)
+      local selection = present(Context.selection(buf))
       assert.are.equal("line", selection.kind)
 
       vim.cmd("normal! \27")
@@ -120,8 +131,7 @@ describe("context module", function()
       vim.cmd("normal! \22") -- Ctrl-V
       vim.api.nvim_win_set_cursor(win, { 2, 3 })
 
-      local selection = Context.selection(buf)
-      assert.is_not_nil(selection)
+      local selection = present(Context.selection(buf))
       assert.are.equal("block", selection.kind)
 
       vim.cmd("normal! \27")
@@ -132,8 +142,7 @@ describe("context module", function()
       vim.cmd("normal! v")
       vim.api.nvim_win_set_cursor(win, { 1, 0 })
 
-      local selection = Context.selection(buf)
-      assert.is_not_nil(selection)
+      local selection = present(Context.selection(buf))
       -- Should be normalized so from < to
       assert.is_true(selection.from[1] <= selection.to[1])
 
@@ -203,8 +212,7 @@ describe("context module", function()
     describe("render_line()", function()
       it("renders plain text", function()
         local ctx = Context.get()
-        local result = ctx:render_line("hello world")
-        assert.is_not_nil(result)
+        local result = present(ctx:render_line("hello world"))
         assert.are.equal(1, #result)
         -- Result is array of lines, each line is array of text chunks
         assert.are.same({ { { "hello world" } } }, result)
@@ -216,8 +224,7 @@ describe("context module", function()
         end
 
         local ctx = Context.get()
-        local result = ctx:render_line("before {test_var} after")
-        assert.is_not_nil(result)
+        local result = present(ctx:render_line("before {test_var} after"))
         assert.are.equal(1, #result)
         assert.are.same({ { "before " }, { "replacement" }, { " after" } }, result[1])
 
@@ -233,8 +240,7 @@ describe("context module", function()
         end
 
         local ctx = Context.get()
-        local result = ctx:render_line("{var1} and {var2}")
-        assert.is_not_nil(result)
+        local result = present(ctx:render_line("{var1} and {var2}"))
         assert.are.equal(1, #result)
         assert.are.same({ { "first" }, { " and " }, { "second" } }, result[1])
 
@@ -254,8 +260,7 @@ describe("context module", function()
         end
 
         local ctx = Context.get()
-        local result = ctx:render_line("start {multiline} end")
-        assert.is_not_nil(result)
+        local result = present(ctx:render_line("start {multiline} end"))
         assert.are.equal(2, #result)
         assert.are.same({ { "start " }, { "line1" } }, result[1])
         assert.are.same({ { "line2" }, { " end" } }, result[2])
@@ -301,7 +306,7 @@ describe("context module", function()
         end
 
         local ctx = Context.get()
-        local text = ctx:render({ prompt = "test_fn" })
+        local text = present(ctx:render({ prompt = "test_fn" }))
         assert.is_not_nil(text:match("Dynamic: %d+"))
 
         Config.cli.prompts.test_fn = nil
@@ -343,9 +348,8 @@ describe("context module", function()
         vim.api.nvim_win_set_cursor(win, { 1, 5 })
 
         local ctx = Context.get()
-        local text = ctx:render("test {this}")
+        local text = present(ctx:render("test {this}"))
         -- In non-file buffer, {this} becomes "this" and selection is appended
-        assert.is_not_nil(text)
         assert.is_true(text:match("test this") ~= nil)
 
         vim.cmd("normal! \27") -- ESC
@@ -472,9 +476,8 @@ describe("context module", function()
         })
 
         local ctx_data = Context.ctx()
-        local result = Context.context.quickfix(ctx_data)
+        local result = present(Quickfix.get(ctx_data))
 
-        assert.is_not_nil(result)
         local lines = Text.lines(result)
         assert.are.same("Quickfix: Test Quickfix", lines[1])
         local rel = vim.fs.basename(tmp)
@@ -492,7 +495,7 @@ describe("context module", function()
         vim.fn.setqflist({}, "r", { items = {} })
 
         local ctx_data = Context.ctx()
-        local result = Context.context.quickfix(ctx_data)
+        local result = Quickfix.get(ctx_data)
 
         assert.is_nil(result)
       end)
@@ -516,9 +519,8 @@ describe("context module", function()
         })
 
         local ctx_data = Context.ctx()
-        local result = Context.context.quickfix(ctx_data)
+        local result = present(Quickfix.get(ctx_data))
 
-        assert.is_not_nil(result)
         local lines = Text.lines(result)
         assert.is_true(lines[1]:find("- @", 1, true) ~= nil)
 
@@ -573,7 +575,7 @@ describe("context module", function()
         return "custom file"
       end
 
-      local fn = Context.fn("file")
+      local fn = present(Context.fn("file"))
       assert.are.equal("custom file", fn(Context.ctx()))
 
       Config.cli.context.file = nil

@@ -1,4 +1,6 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
@@ -1017,6 +1019,9 @@ describe("herdr backend", function()
     end
 
     local attach = session:start()
+    if not attach then
+      error("expected terminal attachment", 2)
+    end
 
     assert.are.same({ "herdr", "agent", "attach", "term-agent" }, attach.cmd)
     assert.are.equal("herdr term-agent", session.id)

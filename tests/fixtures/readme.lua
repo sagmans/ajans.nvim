@@ -105,3 +105,6 @@ local snacks_picker = {
     },
   },
 }
+
+-- Keep extracted examples available to tooling that loads the fixture.
+return { base = base, lualine = lualine, snacks_picker = snacks_picker }

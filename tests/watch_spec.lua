@@ -1,4 +1,6 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 describe("file watcher", function()
   local original_new_fs_event

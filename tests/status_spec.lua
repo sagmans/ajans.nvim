@@ -1,4 +1,6 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 local Session = require("ajans.cli.session")
 local Status = require("ajans.status")

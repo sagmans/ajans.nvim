@@ -1,4 +1,6 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
@@ -7,6 +9,16 @@ local Procs = require("ajans.cli.procs")
 local Scrollback = require("ajans.cli.scrollback")
 local Tmux = require("ajans.cli.session.tmux")
 local Util = require("ajans.util")
+
+---@generic T
+---@param value T?
+---@return T
+local function present(value)
+  if value == nil then
+    error("expected multiplexer fixture", 2)
+  end
+  return value
+end
 
 local function completed(stdout, code, stderr)
   return { code = code or 0, signal = 0, stdout = stdout or "", stderr = stderr or "" }
@@ -189,8 +201,8 @@ local adapters = {
     end,
     stable_identity = function()
       setup_config("tmux")
-      local first = tmux_discovery()[1]
-      local second = tmux_discovery()[1]
+      local first = present(tmux_discovery()[1])
+      local second = present(tmux_discovery()[1])
       assert.are.equal("tmux 101", first.id)
       assert.are.equal(first.id, second.id)
       assert.are.equal(first.tmux_pane_id, second.tmux_pane_id)
@@ -199,7 +211,7 @@ local adapters = {
       setup_config("tmux", { create = "terminal" })
       local embedded = tmux_session({ env = { SET = "value", UNSET = false } })
       embedded.external = false
-      local attach = embedded:start()
+      local attach = present(embedded:start())
       assert.are.equal("tmux", attach.cmd[1])
       assert.is_true(vim.tbl_contains(attach.cmd, "contract-agent"))
       assert.is_true(vim.tbl_contains(attach.cmd, "SET=value"))
@@ -396,7 +408,7 @@ local adapters = {
     end,
     existing_sessions = function()
       setup_config("tmux")
-      local session = tmux_discovery()[1]
+      local session = present(tmux_discovery()[1])
       assert.are.equal("contract", session.tool.name)
       assert.are.equal("%1", session.tmux_pane_id)
       assert.are.same({ 101, 102, 103 }, session.pids)
@@ -482,7 +494,7 @@ local adapters = {
         end
         error("unexpected workspace command")
       end
-      local attach = embedded:start()
+      local attach = present(embedded:start())
       assert.are.same({ "herdr", "agent", "attach", "term-new" }, attach.cmd)
       assert.are.equal("workspace", embedded.herdr_placement)
       local workspace_start = assert(find_call(workspace_calls, { "herdr", "agent", "start" }))
@@ -659,7 +671,7 @@ local adapters = {
     end,
     existing_sessions = function()
       setup_config("herdr")
-      local session = herdr_discovery(true)[1]
+      local session = present(herdr_discovery(true)[1])
       assert.are.equal("contract", session.tool.name)
       assert.is_false(session.herdr_agent)
       assert.are.same({ "herdr", "terminal", "attach", "term-1" }, setmetatable(session, Herdr):attach().cmd)

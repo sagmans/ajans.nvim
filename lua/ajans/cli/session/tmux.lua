@@ -11,6 +11,10 @@ local Util = require("ajans.util")
 
 ---@alias ajans.tmux.InputOperation ajans.tmux.TextOperation|ajans.tmux.SubmitOperation
 
+---@class ajans.cli.session.TmuxState: ajans.cli.session.State
+---@field tmux_pane_id string
+---@field tmux_pid number
+
 ---@class ajans.cli.muxer.Tmux: ajans.cli.Session
 ---@field tmux_pane_id? string
 ---@field tmux_pid? number
@@ -271,9 +275,10 @@ function M.clients()
   return ret, complete
 end
 
+---@return ajans.cli.session.TmuxState[], boolean
 function M.sessions()
   local panes, panes_complete = M.panes()
-  local ret = {} ---@type ajans.cli.session.State[]
+  local ret = {} ---@type ajans.cli.session.TmuxState[]
   local tools = Config.tools()
 
   local clients, clients_complete = M.clients()

@@ -6,6 +6,7 @@ This repository contains `ajans.nvim`, a Neovim plugin that provides an integrat
 
 - Core modules live under `lua/ajans/` (`config.lua`, `cli/`, `status.lua`, etc.).
 - Tests are written with `mini.test` and live in `tests/`. Specs are table-driven whenever possible.
+- `tests/helpers/test.lua` is the typed bridge to MiniTest's collection-time BDD globals and Luassert; specs import its locals instead of declaring test globals.
 - Reference docs are generated automatically via `./scripts/docs`, which updates marked blocks in `CONFIG.md`, `KEYMAPS.md`, and `USAGE.md`.
 - Code style is Lua with `stylua` / `selene` configs already included.
 
@@ -32,8 +33,10 @@ This repository contains `ajans.nvim`, a Neovim plugin that provides an integrat
 
 ## Writing Tests
 
+- Import `assert`, BDD functions, and hooks from `tests.helpers.test`; keep the adapter surface limited to APIs the suite uses.
 - Use `mini.test` assertions (`assert.are.same`, `assert.is_true`, etc.).
 - Prefer table-driven specs for combinatorial cases.
+- Type deliberately partial fixtures at their test-owned seams instead of weakening production contracts or inflating fixtures.
 - Stub Neovim APIs carefully: reassign functions and restore them in `after_each` hooks. For upvalue-based helpers (e.g., health reporters), use `debug.setupvalue`.
 
 ## Things to Watch

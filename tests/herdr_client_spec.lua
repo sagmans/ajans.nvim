@@ -1,6 +1,14 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
+local before_each, after_each = Test.before_each, Test.after_each
 
 local Client = require("ajans.cli.session.herdr.client")
+
+---@class tests.herdr_client.FsApi
+---@field _fs_stat fun(path:string):uv.fs_stat.result?
+---@field _fs_lstat fun(path:string):uv.fs_stat.result?
+---@field _fs_realpath fun(path:string):string?
+local Fs = Client --[[@as tests.herdr_client.FsApi]]
 
 describe("Herdr client", function()
   local original_status
@@ -29,7 +37,7 @@ describe("Herdr client", function()
     original_fs_lstat = Client._fs_lstat
     original_getuid = Client._getuid
     original_fs_realpath = Client._fs_realpath
-    Client._fs_realpath = function(path)
+    Fs._fs_realpath = function(path)
       return path
     end
     Client._request_id = 0
@@ -200,7 +208,11 @@ describe("Herdr client", function()
         return { type = "directory", uid = case.parent_uid or 501, mode = case.parent_mode or 493 }
       end
       Client._fs_lstat = function(path)
-        local value = vim.deepcopy(Client._fs_stat(path))
+        local stat = Client._fs_stat(path)
+        if not stat then
+          error("expected a filesystem fixture", 2)
+        end
+        local value = vim.deepcopy(stat)
         if case.socket_link and path == "/tmp/herdr.sock" then
           value.type = "link"
         end
@@ -218,23 +230,23 @@ describe("Herdr client", function()
   end
 
   it("accepts an owner-only socket through macOS directory aliases", function()
-    Client._fs_realpath = function(path)
+    Fs._fs_realpath = function(path)
       assert.are.equal("/tmp", path)
       return "/private/tmp"
     end
-    Client._fs_stat = function(path)
+    Fs._fs_stat = function(path)
       if path == "/tmp/herdr.sock" or path == "/private/tmp/herdr.sock" then
         return { type = "socket", uid = 501, mode = 384 }
       end
       return { type = "directory", uid = path == "/private" and 0 or 501, mode = path == "/private/tmp" and 1023 or 493 }
     end
-    Client._fs_lstat = function(path)
+    Fs._fs_lstat = function(path)
       if path == "/tmp/herdr.sock" then
         return { type = "socket", uid = 501, mode = 384 }
       elseif path == "/tmp" then
         return { type = "link", uid = 0, mode = 511 }
       end
-      return Client._fs_stat(path)
+      return Fs._fs_stat(path)
     end
     Client._getuid = function()
       return 501
@@ -273,7 +285,7 @@ describe("Herdr client", function()
       end
       return { type = "directory", uid = 501, mode = 493 }
     end
-    Client._fs_lstat = Client._fs_stat
+    Fs._fs_lstat = Fs._fs_stat
     Client._getuid = function()
       return 501
     end

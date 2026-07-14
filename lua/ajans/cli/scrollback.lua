@@ -217,8 +217,8 @@ function M:update(opts)
   end
 end
 
----@param _win_pos? ajans.Pos
-function M:scroll(_win_pos)
+---@param _? ajans.Pos
+function M:scroll(_)
   local terminal = self.terminal()
   if not terminal then
     return

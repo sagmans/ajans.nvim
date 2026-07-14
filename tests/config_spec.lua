@@ -1,4 +1,5 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it, after_each = Test.assert, Test.describe, Test.it, Test.after_each
 
 local Config = require("ajans.config")
 
@@ -19,7 +20,7 @@ describe("config", function()
     })
 
     assert.is_false(Config.cli.watch)
-    assert.is_nil(Config.extra)
+    assert.is_nil(rawget(Config, "extra"))
   end)
 
   it("keeps default mux split options when user split config is not a table", function()

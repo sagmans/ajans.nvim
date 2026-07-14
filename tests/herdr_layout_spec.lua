@@ -1,6 +1,17 @@
----@module 'luassert'
+local Test = require("tests.helpers.test")
+local assert, describe, it = Test.assert, Test.describe, Test.it
 
 local Layout = require("ajans.cli.session.herdr.layout")
+
+---@generic T
+---@param value T?
+---@return T
+local function present(value)
+  if value == nil then
+    error("expected a layout fixture", 2)
+  end
+  return value
+end
 
 local function nested_layout()
   return {
@@ -20,7 +31,7 @@ describe("Herdr layout", function()
   it("selects the smallest split containing a pane", function()
     local layout = nested_layout()
 
-    local split = Layout.containing_split(layout, "new", "right")
+    local split = present(Layout.containing_split(layout, "new", "right"))
 
     assert.are.equal("immediate", split.id)
   end)
@@ -35,12 +46,14 @@ describe("Herdr layout", function()
 
   it("calculates first and second child shares independently at equal ratios", function()
     local layout = nested_layout()
-    local split = Layout.split(layout, "immediate")
+    local split = present(Layout.split(layout, "immediate"))
+    local sibling = present(Layout.pane(layout, "sibling"))
+    local new = present(Layout.pane(layout, "new"))
 
-    assert.is_false(Layout.is_second(split, Layout.pane(layout, "sibling")))
-    assert.is_true(Layout.is_second(split, Layout.pane(layout, "new")))
-    assert.are.equal(0.5, Layout.share(split, Layout.pane(layout, "sibling")))
-    assert.are.equal(0.5, Layout.share(split, Layout.pane(layout, "new")))
+    assert.is_false(Layout.is_second(split, sibling))
+    assert.is_true(Layout.is_second(split, new))
+    assert.are.equal(0.5, Layout.share(split, sibling))
+    assert.are.equal(0.5, Layout.share(split, new))
   end)
 
   for _, case in ipairs({
