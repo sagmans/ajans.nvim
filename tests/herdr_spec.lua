@@ -87,6 +87,7 @@ describe("herdr backend", function()
   local original_has
   local original_system
   local original_client_run
+  local original_client_request
   local original_trusted_socket
   local original_hrtime
   local original_run
@@ -116,6 +117,7 @@ describe("herdr backend", function()
     original_has = vim.fn.has
     original_system = vim.system
     original_client_run = Client.run
+    original_client_request = Client.request
     original_trusted_socket = Client.trusted_socket
     Client.trusted_socket = function()
       return "/tmp/herdr-test.sock"
@@ -165,6 +167,7 @@ describe("herdr backend", function()
     vim.fn.has = original_has
     vim.system = original_system
     Client.run = original_client_run
+    Client.request = original_client_request
     Client.trusted_socket = original_trusted_socket
     vim.uv.hrtime = original_hrtime
     Herdr._run = original_run
@@ -192,10 +195,10 @@ describe("herdr backend", function()
   end)
 
   it("parses and compares semantic versions", function()
-    assert.are.same({ 0, 7, 0 }, Herdr.parse_version("herdr 0.7.0"))
-    assert.is_true(Herdr.version_at_least({ 0, 7, 0 }))
+    assert.are.same({ 0, 8, 0 }, Herdr.parse_version("herdr 0.8.0"))
+    assert.is_false(Herdr.version_at_least({ 0, 7, 3 }))
     assert.is_true(Herdr.version_at_least({ 0, 8, 0 }))
-    assert.is_false(Herdr.version_at_least({ 0, 6, 10 }))
+    assert.is_true(Herdr.version_at_least({ 0, 9, 0 }))
   end)
 
   it("uses api snapshot only when the installed Herdr supports it", function()
@@ -214,19 +217,19 @@ describe("herdr backend", function()
     end
   end)
 
-  it("requires Herdr 0.7.0 or newer", function()
+  it("requires Herdr 0.8.0 or newer", function()
     vim.fn.executable = function(name)
       return name == "herdr" and 1 or 0
     end
     Herdr._run = function()
-      return completed("herdr 0.6.10\n")
+      return completed("herdr 0.7.3\n")
     end
 
     local ok, err = Herdr.validate()
 
     assert.is_false(ok)
-    assert.matches("requires `herdr` >= 0.7.0", err)
-    assert.matches("found 0.6.10", err)
+    assert.matches("requires `herdr` >= 0.8.0", err)
+    assert.matches("found 0.7.3", err)
   end)
 
   it("returns the validated Herdr version", function()
@@ -234,14 +237,14 @@ describe("herdr backend", function()
       return 1
     end
     Herdr._run = function()
-      return completed("herdr 0.7.3\n")
+      return completed("herdr 0.8.2\n")
     end
 
     local ok, err, version = Herdr.validate()
 
     assert.is_true(ok)
     assert.is_nil(err)
-    assert.are.equal("0.7.3", version)
+    assert.are.equal("0.8.2", version)
   end)
 
   it("reports a missing Herdr executable", function()
@@ -393,6 +396,40 @@ describe("herdr backend", function()
     implementation._run_many({ { "first" }, { "second" } })
 
     assert.are.same({ implementation.DISCOVERY_TIMEOUT, 1000 }, waits)
+  end)
+
+  it("sends Herdr 0.8 API requests through the trusted client", function()
+    local observed
+    Client.request = function(method, params)
+      observed = { method = method, params = vim.deepcopy(params) }
+      return success({
+        type = "agent_started",
+        agent = {
+          terminal_id = "term-1",
+          pane_id = "w1:p2",
+          workspace_id = "w1",
+          tab_id = "w1:t1",
+        },
+      })
+    end
+
+    local result = Herdr.api_request("agent.start", {
+      name = "ajans-pi-0123456789ab",
+      kind = "pi",
+      pane_id = "w1:p2",
+      args = { "--resume" },
+    }, { redact = true })
+
+    assert.are.equal("w1:p2", result.agent.pane_id)
+    assert.are.same({
+      method = "agent.start",
+      params = {
+        name = "ajans-pi-0123456789ab",
+        kind = "pi",
+        pane_id = "w1:p2",
+        args = { "--resume" },
+      },
+    }, observed)
   end)
 
   it("decodes JSON command results without overriding the selected Herdr namespace", function()

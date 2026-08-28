@@ -27,8 +27,8 @@ local Util = require("ajans.util")
 local M = {}
 M.__index = M
 
-M.MIN_VERSION = { 0, 7, 0 }
-M.MIN_VERSION_STRING = "0.7.0"
+M.MIN_VERSION = { 0, 8, 0 }
+M.MIN_VERSION_STRING = "0.8.0"
 M.SNAPSHOT_VERSION = { 0, 7, 2 }
 M.STARTUP_TIMEOUT = 5000
 M.STARTUP_INTERVAL = 100
@@ -291,6 +291,34 @@ local function execute(args, opts)
   return nil, message
 end
 
+---@param result vim.SystemCompleted
+---@param rendered string
+---@param opts? ajans.herdr.ExecOpts
+---@return table?, string?
+local function decode_result(result, rendered, opts)
+  local value = decode(result.stdout)
+  if type(value) ~= "table" then
+    if not opts or opts.notify ~= false then
+      Util.error(("Herdr command returned malformed JSON: `%s`"):format(rendered))
+    end
+    return nil, "malformed JSON"
+  end
+  if type(value.error) == "table" then
+    local message = error_message({ code = 1, stdout = result.stdout, stderr = "", signal = 0 })
+    if not opts or opts.notify ~= false then
+      Util.error(("Herdr command failed: `%s`\n%s"):format(rendered, message))
+    end
+    return nil, message
+  end
+  if type(value.result) ~= "table" then
+    if not opts or opts.notify ~= false then
+      Util.error(("Herdr JSON response is missing `result`: `%s`"):format(rendered))
+    end
+    return nil, "missing `result`"
+  end
+  return value.result
+end
+
 ---@param args string[]
 ---@param opts? ajans.herdr.ExecOpts
 ---@return table?, string?
@@ -299,33 +327,30 @@ function M.request(args, opts)
   if not result then
     return nil, err
   end
-  local value = decode(result.stdout)
-  if type(value) ~= "table" then
+  return decode_result(result, display_command(herdr_cmd(args), opts and opts.redact), opts)
+end
+
+---@param method string
+---@param params table
+---@param opts? ajans.herdr.ExecOpts
+---@return table?, string?
+function M.api_request(method, params, opts)
+  local ok, result = pcall(Client.request, method, params)
+  if not ok then
+    local message = tostring(result)
     if not opts or opts.notify ~= false then
-      Util.error(
-        ("Herdr command returned malformed JSON: `%s`"):format(display_command(herdr_cmd(args), opts and opts.redact))
-      )
-    end
-    return nil, "malformed JSON"
-  end
-  if type(value.error) == "table" then
-    local message = error_message({ code = 1, stdout = result.stdout, stderr = "", signal = 0 })
-    if not opts or opts.notify ~= false then
-      Util.error(
-        ("Herdr command failed: `%s`\n%s"):format(display_command(herdr_cmd(args), opts and opts.redact), message)
-      )
+      Util.error(("Failed to execute Herdr API request: `%s`\n%s"):format(method, message))
     end
     return nil, message
   end
-  if type(value.result) ~= "table" then
+  if result.code ~= 0 then
+    local message = error_message(result)
     if not opts or opts.notify ~= false then
-      Util.error(
-        ("Herdr JSON response is missing `result`: `%s`"):format(display_command(herdr_cmd(args), opts and opts.redact))
-      )
+      Util.error(("Herdr API request failed: `%s`\n%s"):format(method, message))
     end
-    return nil, "missing `result`"
+    return nil, message
   end
-  return value.result
+  return decode_result(result, method, opts)
 end
 
 ---@param args string[]
