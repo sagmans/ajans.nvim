@@ -125,6 +125,44 @@ describe("Herdr discovery", function()
     assert.are.same({ 21 }, sessions[1].pids)
   end)
 
+  it("preserves workspace placement for an unsupported shell-launched tool", function()
+    local backend = {
+      supports_snapshot = function()
+        return true
+      end,
+      request = function()
+        return {
+          snapshot = {
+            workspaces = { { workspace_id = "w1", label = "ajans:custom abc123" } },
+            tabs = { { tab_id = "t1", workspace_id = "w1" } },
+            panes = {
+              {
+                pane_id = "custom",
+                terminal_id = "term-custom",
+                workspace_id = "w1",
+                tab_id = "t1",
+                process_info = {
+                  foreground_processes = { { pid = 21, cmdline = "custom-agent", cwd = "/custom" } },
+                },
+              },
+            },
+            agents = {},
+          },
+        }
+      end,
+      _run_many = function(commands)
+        assert.are.same({}, commands)
+        return {}
+      end,
+    }
+
+    local sessions = Discovery.sessions(backend)
+
+    assert.are.equal(1, #sessions)
+    assert.are.equal("workspace", sessions[1].herdr_placement)
+    assert.is_false(sessions[1].herdr_agent)
+  end)
+
   for _, malformed in ipairs({
     { field = "agents", value = { "invalid" } },
     { field = "workspaces", value = { 1 } },

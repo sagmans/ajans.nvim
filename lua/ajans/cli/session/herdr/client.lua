@@ -13,6 +13,7 @@ local M = {}
 ---@alias ajans.uv.Spawn fun(path:string, options:ajans.uv.SpawnOptions, on_exit:uv.spawn.on_exit):(uv.uv_process_t?, integer|string?)
 
 M.TIMEOUT = 5000
+M.REQUEST_TIMEOUT_GRACE = 1000
 M.MAX_RESPONSE_BYTES = 1024 * 1024
 M._request_id = 0
 M._fs_stat = vim.uv.fs_stat
@@ -47,8 +48,10 @@ local SERVER_ENV_KEYS = {
 function M.is_sensitive(cmd)
   return cmd[1] == "herdr"
     and (
-      (cmd[2] == "agent" and (cmd[3] == "start" or cmd[3] == "send"))
-      or (cmd[2] == "pane" and cmd[3] == "send-text")
+      (cmd[2] == "workspace" and cmd[3] == "create")
+      or (cmd[2] == "tab" and cmd[3] == "create")
+      or (cmd[2] == "pane" and (cmd[3] == "split" or cmd[3] == "send-text"))
+      or (cmd[2] == "agent" and cmd[3] == "start")
     )
 end
 
@@ -215,8 +218,9 @@ end
 
 ---@param method string
 ---@param params table
+---@param timeout? integer
 ---@return vim.SystemCompleted
-function M.request(method, params)
+function M.request(method, params, timeout)
   local socket, socket_error = M.trusted_socket()
   if not socket then
     return { code = 1, signal = 0, stdout = "", stderr = socket_error }
@@ -229,7 +233,7 @@ function M.request(method, params)
     method = method,
     params = params,
   })
-  local exchanged, response, exchange_error = pcall(M._exchange, socket, payload, M.TIMEOUT)
+  local exchanged, response, exchange_error = pcall(M._exchange, socket, payload, timeout or M.TIMEOUT)
   if not exchanged then
     exchange_error = tostring(response)
     response = nil
@@ -254,30 +258,28 @@ function M.request(method, params)
 end
 
 ---@param value string
----@return string, string
+---@return string?, string?
 local function env_pair(value)
-  local split = assert(value:find("=", 1, true), "invalid Herdr environment assignment")
+  local split = value:find("=", 1, true)
+  if not split or split == 1 then
+    return
+  end
   return value:sub(1, split - 1), value:sub(split + 1)
 end
 
----@class ajans.herdr.AgentStartParams
----@field name? string
----@field cwd? string
----@field workspace_id? string
----@field tab_id? string
----@field split? string
----@field argv? string[]
----@field env table<string,string>
----@field focus boolean
+---@return vim.SystemCompleted
+local function invalid_sensitive_command()
+  return { code = 2, signal = 0, stdout = "", stderr = "invalid sensitive Herdr command" }
+end
 
 ---@param cmd string[]
+---@param method string
+---@param fields table<string,string>
 ---@return vim.SystemCompleted
-local function start(cmd)
-  local params = { env = {}, focus = false } ---@type ajans.herdr.AgentStartParams
+local function create(cmd, method, fields)
+  local params = { env = {}, focus = false }
   local index = 4
-  params.name = cmd[index]
-  index = index + 1
-  while index <= #cmd and cmd[index] ~= "--" do
+  while index <= #cmd do
     local flag = cmd[index]
     if flag == "--no-focus" then
       params.focus = false
@@ -286,42 +288,86 @@ local function start(cmd)
       params.focus = true
       index = index + 1
     elseif flag == "--env" then
-      local key, value = env_pair(assert(cmd[index + 1], "missing Herdr environment assignment"))
+      local assignment = cmd[index + 1]
+      if type(assignment) ~= "string" then
+        return invalid_sensitive_command()
+      end
+      local key, value = env_pair(assignment)
+      if not key then
+        return invalid_sensitive_command()
+      end
       params.env[key] = value
       index = index + 2
     else
+      local field = fields[flag]
       local value = cmd[index + 1]
-      if value == nil then
-        return { code = 2, signal = 0, stdout = "", stderr = "invalid Herdr agent start command" }
-      elseif flag == "--cwd" then
-        params.cwd = value
-      elseif flag == "--workspace" then
-        params.workspace_id = value
-      elseif flag == "--tab" then
-        params.tab_id = value
-      elseif flag == "--split" then
-        params.split = value
-      else
-        return { code = 2, signal = 0, stdout = "", stderr = "invalid Herdr agent start command" }
+      if not field or type(value) ~= "string" then
+        return invalid_sensitive_command()
       end
+      params[field] = value
       index = index + 2
     end
   end
-  if type(params.name) ~= "string" or cmd[index] ~= "--" or index == #cmd then
-    return { code = 2, signal = 0, stdout = "", stderr = "invalid Herdr agent start command" }
+  return M.request(method, params)
+end
+
+---@param cmd string[]
+---@return vim.SystemCompleted
+local function start(cmd)
+  local params = { name = cmd[4], args = {} }
+  local index = 5
+  while index <= #cmd and cmd[index] ~= "--" do
+    local flag = cmd[index]
+    local value = cmd[index + 1]
+    if type(value) ~= "string" then
+      return invalid_sensitive_command()
+    elseif flag == "--kind" then
+      params.kind = value
+    elseif flag == "--pane" then
+      params.pane_id = value
+    elseif flag == "--timeout" then
+      params.timeout_ms = tonumber(value)
+      if not params.timeout_ms then
+        return invalid_sensitive_command()
+      end
+    else
+      return invalid_sensitive_command()
+    end
+    index = index + 2
   end
-  params.argv = vim.list_slice(cmd, index + 1)
-  return M.request("agent.start", params)
+  if cmd[index] == "--" then
+    params.args = vim.list_slice(cmd, index + 1)
+  end
+  if type(params.name) ~= "string" or type(params.kind) ~= "string" or type(params.pane_id) ~= "string" then
+    return invalid_sensitive_command()
+  end
+  local timeout = params.timeout_ms and params.timeout_ms + M.REQUEST_TIMEOUT_GRACE or nil
+  return M.request("agent.start", params, timeout)
 end
 
 ---@param cmd string[]
 ---@return vim.SystemCompleted
 function M.run(cmd)
+  if cmd[2] == "workspace" and cmd[3] == "create" then
+    return create(cmd, "workspace.create", { ["--cwd"] = "cwd", ["--label"] = "label" })
+  end
+  if cmd[2] == "tab" and cmd[3] == "create" then
+    return create(cmd, "tab.create", {
+      ["--workspace"] = "workspace_id",
+      ["--cwd"] = "cwd",
+      ["--label"] = "label",
+    })
+  end
+  if cmd[2] == "pane" and cmd[3] == "split" then
+    return create(cmd, "pane.split", {
+      ["--pane"] = "target_pane_id",
+      ["--workspace"] = "workspace_id",
+      ["--direction"] = "direction",
+      ["--cwd"] = "cwd",
+    })
+  end
   if cmd[2] == "agent" and cmd[3] == "start" then
     return start(cmd)
-  end
-  if cmd[2] == "agent" and cmd[3] == "send" and type(cmd[4]) == "string" and type(cmd[5]) == "string" then
-    return M.request("agent.send", { target = cmd[4], text = table.concat(cmd, " ", 5) })
   end
   if cmd[2] == "pane" and cmd[3] == "send-text" and type(cmd[4]) == "string" and type(cmd[5]) == "string" then
     return M.request("pane.send_text", { pane_id = cmd[4], text = table.concat(cmd, " ", 5) })

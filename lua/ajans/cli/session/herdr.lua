@@ -37,6 +37,9 @@ M.LIVENESS_TIMEOUT = 250
 M.LIVENESS_ERROR_INTERVAL = 30000
 M.INPUT_READY_TIMEOUT = 5000
 M.INPUT_READY_INTERVAL = 100
+M.PANE_READY_TIMEOUT = 5000
+M.PANE_READY_INTERVAL = 100
+M.AGENT_START_TIMEOUT = 30000
 M.DISCOVERY_TIMEOUT = 5000
 M.PROCESS_INFO_CONCURRENCY = 8
 M.MAX_DUMP_LINES = 1000
@@ -44,7 +47,40 @@ M.SEND_CHUNK_BYTES = 24 * 1024
 M.RESTART_WARNING =
   "Restarting stops active pane processes; save work first or use Herdr's supported live handoff: https://herdr.dev/docs/session-state/"
 
-local AGENT_PREFIX = "ajans:"
+local AGENT_LABEL_PREFIX = "ajans:"
+local AGENT_NAME_PREFIX = "ajans-"
+local AGENT_NAME_HASH_BYTES = 12
+local AGENT_NAME_MAX_BYTES = 32
+local AGENT_NAME_SEPARATOR_BYTES = 1
+local AGENT_NAME_TOOL_BYTES = AGENT_NAME_MAX_BYTES
+  - #AGENT_NAME_PREFIX
+  - AGENT_NAME_SEPARATOR_BYTES
+  - AGENT_NAME_HASH_BYTES
+local SHELL_EXEC_PREFIX = "exec "
+local SHELL_QUOTE_ESCAPE = "'\"'\"'"
+local HERDR_MANAGED_ENV_KEYS = {
+  "HERDR_ENV",
+  "HERDR_PANE_ID",
+  "HERDR_TAB_ID",
+  "HERDR_WORKSPACE_ID",
+}
+local CLEARED_HOST_ENV_KEYS = {
+  "NVIM",
+  "NVIM_LISTEN_ADDRESS",
+  "TMUX",
+  "TMUX_PANE",
+}
+local REGISTERED_AGENTS = {
+  antigravity = { kind = "agy", executable = "agy" },
+  claude = { kind = "claude", executable = "claude" },
+  codex = { kind = "codex", executable = "codex" },
+  copilot = { kind = "copilot", executable = "copilot" },
+  cursor = { kind = "cursor", executable = "cursor-agent" },
+  grok = { kind = "grok", executable = "grok" },
+  opencode = { kind = "opencode", executable = "opencode" },
+  pi = { kind = "pi", executable = "pi" },
+  qwen = { kind = "qwen", executable = "qwen" },
+}
 
 ---@param cmd string[]
 ---@param opts? vim.SystemOpts
@@ -485,121 +521,176 @@ function M:init()
 end
 
 ---@return string
-function M:agent_name()
-  return ("%s%s %s"):format(AGENT_PREFIX, self.tool.name, vim.fn.sha256(self.cwd):sub(1, 12))
+function M:session_label()
+  return ("%s%s %s"):format(AGENT_LABEL_PREFIX, self.tool.name, vim.fn.sha256(self.cwd):sub(1, AGENT_NAME_HASH_BYTES))
 end
 
----@return string[], string[]
-function M:launch_argv()
-  local argv = vim.deepcopy(self.tool.cmd)
-  local env_args = {}
-  local unset = { "NVIM", "NVIM_LISTEN_ADDRESS", "TMUX", "TMUX_PANE" }
+---@return string
+function M:agent_name()
+  local tool = self.tool.name:lower():gsub("[^a-z0-9_-]", "_"):sub(1, AGENT_NAME_TOOL_BYTES):gsub("[-_]+$", "")
+  if tool == "" then
+    tool = "tool"
+  end
+  return ("%s%s-%s"):format(AGENT_NAME_PREFIX, tool, vim.fn.sha256(self.cwd):sub(1, AGENT_NAME_HASH_BYTES))
+end
+
+---@return string[]
+function M:launch_environment()
   local env = vim.fn.environ()
-  -- Herdr assigns fresh pane identity after applying this map. Do not carry
-  -- host-multiplexer or Neovim endpoint identities into the child process.
-  for _, key in ipairs({
-    "HERDR_ENV",
-    "HERDR_PANE_ID",
-    "HERDR_TAB_ID",
-    "HERDR_WORKSPACE_ID",
-    "NVIM",
-    "NVIM_LISTEN_ADDRESS",
-    "TMUX",
-    "TMUX_PANE",
-  }) do
+  for _, key in ipairs(HERDR_MANAGED_ENV_KEYS) do
     env[key] = nil
-    unset[#unset + 1] = key
+  end
+  for _, key in ipairs(CLEARED_HOST_ENV_KEYS) do
+    env[key] = ""
   end
   for key, value in pairs(self.tool.env or {}) do
-    if value == false then
-      env[key] = nil
-      if not vim.tbl_contains(unset, key) then
-        unset[#unset + 1] = key
-      end
-    else
-      env[key] = tostring(value)
-    end
+    env[key] = value == false and "" or tostring(value)
   end
+  local args = {}
   local keys = vim.tbl_keys(env)
   table.sort(keys)
-  table.sort(unset)
   for _, key in ipairs(keys) do
-    vim.list_extend(env_args, { "--env", ("%s=%s"):format(key, env[key]) })
+    vim.list_extend(args, { "--env", ("%s=%s"):format(key, env[key]) })
   end
-  if #unset > 0 then
-    local wrapped = { "env" }
-    for _, key in ipairs(unset) do
-      vim.list_extend(wrapped, { "-u", key })
-    end
-    wrapped[#wrapped + 1] = "--"
-    vim.list_extend(wrapped, argv)
-    argv = wrapped
+  return args
+end
+
+---@param self ajans.cli.muxer.Herdr
+---@param args string[]
+---@return string[]
+local function with_launch_environment(self, args)
+  vim.list_extend(args, self:launch_environment())
+  return args
+end
+
+---@param self ajans.cli.muxer.Herdr
+---@return string?
+local function registered_kind(self)
+  local registration = REGISTERED_AGENTS[self.tool.name]
+  local executable = self.tool.cmd and vim.fs.basename(self.tool.cmd[1] or "") or ""
+  if registration and executable == registration.executable then
+    return registration.kind
   end
-  return argv, env_args
+end
+
+---@param value string
+---@return string
+local function shell_quote(value)
+  return "'" .. value:gsub("'", SHELL_QUOTE_ESCAPE) .. "'"
+end
+
+---@param self ajans.cli.muxer.Herdr
+---@return string
+local function shell_command(self)
+  local quoted = vim.tbl_map(shell_quote, self.tool.cmd)
+  return SHELL_EXEC_PREFIX .. table.concat(quoted, " ")
+end
+
+---@param pane table
+---@return boolean
+local function stable_pane(pane)
+  return type(pane) == "table"
+    and type(pane.terminal_id) == "string"
+    and type(pane.pane_id) == "string"
+    and type(pane.workspace_id) == "string"
+    and type(pane.tab_id) == "string"
+end
+
+---@param pane table?
+---@param workspace_id string
+---@param tab_id string
+---@return table?
+local function created_pane(pane, workspace_id, tab_id)
+  if
+    type(pane) ~= "table"
+    or type(pane.pane_id) ~= "string"
+    or type(pane.terminal_id) ~= "string"
+    or (pane.workspace_id ~= nil and pane.workspace_id ~= workspace_id)
+    or (pane.tab_id ~= nil and pane.tab_id ~= tab_id)
+  then
+    return
+  end
+  pane = vim.deepcopy(pane)
+  pane.workspace_id = workspace_id
+  pane.tab_id = tab_id
+  return stable_pane(pane) and pane or nil
 end
 
 ---@type fun(kind:"workspace"|"tab"|"pane", id:string):boolean
 local rollback
 
----@param workspace_id string
----@param tab_id string
----@param split "right"|"down"
----@return table?
-function M:launch(workspace_id, tab_id, split)
-  local argv, env_args = self:launch_argv()
+---@param err string?
+---@return boolean
+local function pane_not_ready(err)
+  return type(err) == "string"
+    and (err:find("agent_pane_busy", 1, true) ~= nil or err:find("not an available shell", 1, true) ~= nil)
+end
+
+---@param pane table
+---@return table? resource
+---@return boolean? agent
+function M:launch(pane)
+  local kind = registered_kind(self)
+  if not kind then
+    if not M.request({ "pane", "send-text", pane.pane_id, shell_command(self) }, { redact = true }) then
+      return
+    end
+    if M.command({ "pane", "send-keys", pane.pane_id, "enter" }) == nil then
+      return
+    end
+    return pane, false
+  end
+
   local cmd = {
     "agent",
     "start",
     self:agent_name(),
-    "--cwd",
-    self.cwd,
-    "--workspace",
-    workspace_id,
-    "--tab",
-    tab_id,
-    "--split",
-    split,
-    "--no-focus",
+    "--kind",
+    kind,
+    "--pane",
+    pane.pane_id,
+    "--timeout",
+    tostring(M.AGENT_START_TIMEOUT),
+    "--",
   }
-  vim.list_extend(cmd, env_args)
-  cmd[#cmd + 1] = "--"
-  vim.list_extend(cmd, argv)
-  local result = M.request(cmd, { redact = true })
-  local agent = result and result.agent
-  if
-    type(agent) ~= "table"
-    or type(agent.terminal_id) ~= "string"
-    or type(agent.pane_id) ~= "string"
-    or type(agent.workspace_id) ~= "string"
-    or type(agent.tab_id) ~= "string"
-  then
-    if type(agent) == "table" and type(agent.pane_id) == "string" then
-      rollback("pane", agent.pane_id)
-    end
+  vim.list_extend(cmd, vim.list_slice(self.tool.cmd, 2))
+  local result
+  local start_error
+  M._wait(M.PANE_READY_TIMEOUT, function()
+    result, start_error = M.request(cmd, { redact = true, notify = false })
+    return result ~= nil or not pane_not_ready(start_error)
+  end, M.PANE_READY_INTERVAL)
+  if not result then
+    Util.error("Herdr agent start failed: " .. (start_error or "destination pane did not become ready"))
+    return
+  end
+  local agent = result.agent
+  if not stable_pane(agent) or agent.pane_id ~= pane.pane_id or agent.terminal_id ~= pane.terminal_id then
     if result ~= nil then
-      Util.error("Herdr agent start response is missing stable terminal, pane, workspace, or tab IDs")
+      Util.error("Herdr agent start response does not match the destination pane")
     end
     return
   end
-  return agent
+  return agent, true
 end
 
----@param agent table
+---@param resource table
 ---@param placement "workspace"|"tab"|"split"
-function M:set_agent(agent, placement)
-  self.id = "herdr " .. agent.terminal_id
-  self.identity = "herdr:" .. agent.terminal_id
-  self.herdr_terminal_id = agent.terminal_id
-  self.herdr_pane_id = agent.pane_id
-  self.herdr_workspace_id = agent.workspace_id
-  self.herdr_tab_id = agent.tab_id
-  self.herdr_agent = true
-  self.herdr_name = agent.name or self:agent_name()
-  self.herdr_label = agent.agent or agent.display_agent
-  self.herdr_agent_session = agent.agent_session
+---@param agent boolean
+function M:set_resource(resource, placement, agent)
+  self.id = "herdr " .. resource.terminal_id
+  self.identity = "herdr:" .. resource.terminal_id
+  self.herdr_terminal_id = resource.terminal_id
+  self.herdr_pane_id = resource.pane_id
+  self.herdr_workspace_id = resource.workspace_id
+  self.herdr_tab_id = resource.tab_id
+  self.herdr_agent = agent
+  self.herdr_name = agent and (resource.name or self:agent_name()) or nil
+  self.herdr_label = agent and (resource.agent or resource.display_agent) or nil
+  self.herdr_agent_session = agent and resource.agent_session or nil
   self.herdr_placement = placement
-  self.mux_session = agent.workspace_id
-  self.cwd = agent.foreground_cwd or agent.cwd or self.cwd
+  self.mux_session = resource.workspace_id
+  self.cwd = resource.foreground_cwd or resource.cwd or self.cwd
   -- Herdr may report the bootstrap shell before the launched tool takes over.
   -- Leave first authorization unpinned; the exact tool process is pinned then.
   self.pids = {}
@@ -607,6 +698,12 @@ function M:set_agent(agent, placement)
   self.started = true
   self.external = placement ~= "workspace"
   self.priority = self.external and 10 or 50
+end
+
+---@param agent table
+---@param placement "workspace"|"tab"|"split"
+function M:set_agent(agent, placement)
+  self:set_resource(agent, placement, true)
 end
 
 ---@param kind "workspace"|"tab"|"pane"
@@ -626,40 +723,42 @@ end
 ---@return ajans.cli.terminal.Cmd? cmd
 ---@return boolean started
 function M:start_workspace()
-  local result = M.request({
+  local args = with_launch_environment(self, {
     "workspace",
     "create",
     "--cwd",
     self.cwd,
     "--label",
-    self:agent_name(),
+    self:session_label(),
     "--no-focus",
   })
+  local result = M.request(args, { redact = true })
   if not result then
     return nil, false
   end
   local workspace_id = result.workspace and result.workspace.workspace_id
   local tab_id = result.tab and result.tab.tab_id
-  local root_pane_id = result.root_pane and result.root_pane.pane_id
-  if type(workspace_id) ~= "string" or type(tab_id) ~= "string" or type(root_pane_id) ~= "string" then
+  if type(workspace_id) ~= "string" or type(tab_id) ~= "string" then
     if type(workspace_id) == "string" then
       rollback("workspace", workspace_id)
     end
-    Util.error("Herdr workspace creation response is missing stable workspace, tab, or pane IDs")
+    Util.error("Herdr workspace creation response is missing stable workspace or tab IDs")
     return nil, false
   end
-  local agent = self:launch(workspace_id, tab_id, "right")
-  if not agent then
+  local pane = created_pane(result.root_pane, workspace_id, tab_id)
+  if not pane then
+    rollback("workspace", workspace_id)
+    Util.error("Herdr workspace creation response is missing a stable root pane")
+    return nil, false
+  end
+  local resource, agent = self:launch(pane)
+  if not resource then
     rollback("workspace", workspace_id)
     return nil, false
   end
-  local closed = M.command({ "pane", "close", root_pane_id })
-  if closed == nil then
-    rollback("workspace", workspace_id)
-    return nil, false
-  end
-  self:set_agent(agent, "workspace")
-  return { cmd = { "herdr", "agent", "attach", self.herdr_terminal_id } }, true
+  self:set_resource(resource, "workspace", agent == true)
+  local attach_kind = agent and "agent" or "terminal"
+  return { cmd = { "herdr", attach_kind, "attach", self.herdr_terminal_id } }, true
 end
 
 ---@return boolean
@@ -677,40 +776,39 @@ function M:start_tab()
   if not self:have_host_ids() then
     return nil, false
   end
-  local result = M.request({
+  local workspace_id = vim.env.HERDR_WORKSPACE_ID
+  local args = with_launch_environment(self, {
     "tab",
     "create",
     "--workspace",
-    vim.env.HERDR_WORKSPACE_ID,
+    workspace_id,
     "--cwd",
     self.cwd,
     "--label",
-    self:agent_name(),
+    self:session_label(),
     "--no-focus",
   })
+  local result = M.request(args, { redact = true })
   if not result then
     return nil, false
   end
   local tab_id = result.tab and result.tab.tab_id
-  local root_pane_id = result.root_pane and result.root_pane.pane_id
-  if type(tab_id) ~= "string" or type(root_pane_id) ~= "string" then
-    if type(tab_id) == "string" then
-      rollback("tab", tab_id)
-    end
-    Util.error("Herdr tab creation response is missing stable tab or pane IDs")
+  if type(tab_id) ~= "string" then
+    Util.error("Herdr tab creation response is missing a stable tab ID")
     return nil, false
   end
-  local agent = self:launch(vim.env.HERDR_WORKSPACE_ID, tab_id, "right")
-  if not agent then
+  local pane = created_pane(result.root_pane, workspace_id, tab_id)
+  if not pane then
+    rollback("tab", tab_id)
+    Util.error("Herdr tab creation response is missing a stable root pane")
+    return nil, false
+  end
+  local resource, agent = self:launch(pane)
+  if not resource then
     rollback("tab", tab_id)
     return nil, false
   end
-  local closed = M.command({ "pane", "close", root_pane_id })
-  if closed == nil then
-    rollback("tab", tab_id)
-    return nil, false
-  end
-  self:set_agent(agent, "tab")
+  self:set_resource(resource, "tab", agent == true)
   Util.info(("Started **%s** in a new Herdr tab"):format(self.tool.name))
   return nil, true
 end
@@ -805,16 +903,48 @@ function M:start_split()
   if not self:have_host_ids() then
     return nil, false
   end
+  local host_pane_id = vim.env.HERDR_PANE_ID
+  if not host_pane_id then
+    Util.error("Herdr split creation requires `HERDR_PANE_ID`")
+    return nil, false
+  end
+  local workspace_id = vim.env.HERDR_WORKSPACE_ID
+  local tab_id = vim.env.HERDR_TAB_ID
   local direction = Config.cli.mux.split.vertical and "right" or "down"
-  local agent = self:launch(vim.env.HERDR_WORKSPACE_ID, vim.env.HERDR_TAB_ID, direction)
-  if not agent then
+  local args = with_launch_environment(self, {
+    "pane",
+    "split",
+    "--pane",
+    host_pane_id,
+    "--direction",
+    direction,
+    "--cwd",
+    self.cwd,
+    "--no-focus",
+  })
+  local result = M.request(args, { redact = true })
+  if not result then
     return nil, false
   end
-  if not self:size_split(agent.pane_id, direction) then
-    rollback("pane", agent.pane_id)
+  local pane_id = result.pane and result.pane.pane_id
+  local pane = created_pane(result.pane, workspace_id, tab_id)
+  if not pane then
+    if type(pane_id) == "string" then
+      rollback("pane", pane_id)
+    end
+    Util.error("Herdr pane split response is missing a stable pane")
     return nil, false
   end
-  self:set_agent(agent, "split")
+  local resource, agent = self:launch(pane)
+  if not resource then
+    rollback("pane", pane.pane_id)
+    return nil, false
+  end
+  if not self:size_split(pane.pane_id, direction) then
+    rollback("pane", pane.pane_id)
+    return nil, false
+  end
+  self:set_resource(resource, "split", agent == true)
   Util.info(("Started **%s** in a new Herdr split"):format(self.tool.name))
   return nil, true
 end
@@ -1064,12 +1194,7 @@ local function drain_input(self)
             accepted = false
             break
           end
-          local result
-          if self.herdr_agent then
-            result = M.request({ "agent", "send", self.herdr_terminal_id, chunk }, { redact = true })
-          else
-            result = M.command({ "pane", "send-text", self.herdr_pane_id, chunk }, { redact = true })
-          end
+          local result = M.request({ "pane", "send-text", self.herdr_pane_id, chunk }, { redact = true })
           if not result then
             accepted = false
             break

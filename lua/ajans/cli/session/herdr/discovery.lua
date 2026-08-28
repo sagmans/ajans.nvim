@@ -9,7 +9,8 @@ local M = {}
 ---@field supports_snapshot fun():boolean
 ---@field _run_many fun(commands:string[][]):vim.SystemCompleted[]
 
-local AGENT_PREFIX = "ajans:"
+local AGENT_LABEL_PREFIX = "ajans:"
+local AGENT_NAME_PREFIX = "ajans-"
 local LABEL_ALIASES = {
   ["github-copilot"] = "copilot",
   ["github copilot"] = "copilot",
@@ -32,8 +33,16 @@ local function tool_name_for_owned_agent(name)
   if type(name) ~= "string" then
     return
   end
-  local tool = name:match("^" .. AGENT_PREFIX .. "([^%s]+)")
+  local tool = name:match("^" .. AGENT_LABEL_PREFIX .. "([^%s]+)")
+    or name:match("^" .. AGENT_NAME_PREFIX .. "([a-z0-9_-]+)%-[0-9a-f]+$")
   return tool and Config.cli.tools[tool] ~= nil and tool or nil
+end
+
+---@param name string?
+---@return boolean
+local function owned_agent_name(name)
+  return type(name) == "string"
+    and (name:find("^" .. AGENT_LABEL_PREFIX) ~= nil or name:find("^" .. AGENT_NAME_PREFIX) ~= nil)
 end
 
 ---@param values integer[]
@@ -387,12 +396,14 @@ function M.sessions(backend)
         or pane.cwd
         or vim.uv.cwd()
       local name = agent and agent.name
+      local workspace = workspaces[pane.workspace_id]
+      local tab = tabs[pane.tab_id]
       local placement
-      if name and workspaces[pane.workspace_id] and workspaces[pane.workspace_id].label == name then
+      if workspace and tool_name_for_owned_agent(workspace.label) == tool.name then
         placement = "workspace"
-      elseif name and tabs[pane.tab_id] and tabs[pane.tab_id].label == name then
+      elseif tab and tool_name_for_owned_agent(tab.label) == tool.name then
         placement = "tab"
-      elseif name and name:find("^" .. AGENT_PREFIX) then
+      elseif owned_agent_name(name) then
         placement = "split"
       end
       sessions[#sessions + 1] = {

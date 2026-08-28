@@ -43,7 +43,7 @@ REQUIREMENTS                        *ajans.nvim-ajans.nvim-requirements*
 - snacks.nvim for better prompt/tool selection (optional)
 - nvim-treesitter-textobjects main branch for `{function}` and `{class}`
   context variables (optional)
-- tmux, or Herdr >= 0.7.0 on macOS/Linux, for persistent CLI sessions
+- tmux, or Herdr >= 0.8.0 on macOS/Linux, for persistent CLI sessions
 - AI CLI tools such as Codex, Claude, Copilot, Antigravity, etc. (optional)
 - With tmux: Linux uses ps or /proc for discovery; other Unix systems use ps
   for discovery and optionally lsof for working-directory detection
@@ -115,7 +115,8 @@ invalid so health can explain why. When needed, Ajans opens a lightweight Neovim
 terminal wrapper attached to the persistent session. A compatible Herdr server
 remains usable when restart is recommended. Ajans-started Herdr servers receive
 a strict system/runtime environment allowlist; current project variables are
-sent only with each agent launch. Helper prompts can include locations,
+applied only when creating each pane. Registered tools use Herdr's agent launch;
+custom commands use escaped shell fallback. Helper prompts can include locations,
 selections, diagnostics, quickfix entries, buffers, functions, and classes.
 
 API summary:
@@ -200,7 +201,7 @@ CLI tools not starting? ~
 Terminal sessions not persisting? ~
 
 Run `:checkhealth ajans` and install the selected backend. Use tmux or Herdr
->= 0.7.0 on macOS/Linux. Herdr health also validates its owner-only local API
+>= 0.8.0 on macOS/Linux. Herdr health also validates its owner-only local API
 socket. Set `cli.mux.backend` explicitly if auto-selection chose the wrong
 installed backend.
 

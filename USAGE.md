@@ -8,9 +8,9 @@ Ajans does not create global keymaps by itself. The examples below assume the su
 
 `cli.mux.backend = "auto"` is the default. Auto-selection prefers a usable multiplexer hosting Neovim, then a running compatible Herdr server, the sole usable backend, and tmux as the compatibility fallback. If Herdr is the only installed backend, Ajans selects it even when validation fails so `:checkhealth ajans` can report the cause. Use `"tmux"` or `"herdr"` for an explicit choice.
 
-Herdr `>= 0.7.0` is supported on macOS and Linux. When Neovim runs inside Herdr, Ajans maps `create = "window"` to a Herdr tab and `create = "split"` to a Herdr pane split. Native placement uses `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID`, which Herdr exports to hosted panes. Named sessions selected with `HERDR_SESSION` or `HERDR_SOCKET_PATH` are inherited automatically. A running server with a compatible protocol remains usable when Herdr recommends a client-version restart; `:checkhealth ajans` reports that recommendation without blocking sessions.
+Herdr `>= 0.8.0` is supported on macOS and Linux. When Neovim runs inside Herdr, Ajans maps `create = "window"` to a Herdr tab and `create = "split"` to a Herdr pane split. Native tabs use `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID`; splits also use `HERDR_PANE_ID`. Herdr exports these values to hosted panes. Named sessions selected with `HERDR_SESSION` or `HERDR_SOCKET_PATH` are inherited automatically. A running server with a compatible protocol remains usable when Herdr recommends a client-version restart; `:checkhealth ajans` reports that recommendation without blocking sessions.
 
-When Ajans starts Herdr, it gives the long-lived shared server a strict allowlist of system/runtime variables rather than persisting the full Neovim project environment. Ajans-created agents still receive the current launch environment through the trusted local socket. Other Herdr consumers that require variables such as `SSH_AUTH_SOCK`, proxy settings, editor settings, or custom plugin variables should start the shared Herdr server themselves with their chosen environment before Ajans creates a session.
+When Ajans starts Herdr, it gives the long-lived shared server a strict allowlist of system/runtime variables rather than persisting the full Neovim project environment. Ajans applies the current launch environment only when creating each pane through the trusted local socket. Built-in tools recognized by Herdr use its registered-agent launch; custom commands and unsupported tools use an escaped shell launch in the created pane. Other Herdr consumers that require variables such as `SSH_AUTH_SOCK`, proxy settings, editor settings, or custom plugin variables should start the shared Herdr server themselves with their chosen environment before Ajans creates a session.
 
 ## Keymap-first workflow
 
@@ -318,7 +318,7 @@ For automatic reloads, enable Neovim `autoread`:
 
 1. Run `:checkhealth ajans` and confirm the intended backend was selected.
 2. For tmux, verify `tmux` is installed.
-3. For Herdr, verify `herdr --version` reports `0.7.0` or newer and confirm health reports a trusted owner-only local API socket. A compatible version mismatch is advisory; protocol incompatibility blocks use. Before restarting, save active pane work: a restart stops the original shells, agents, tests, and other pane processes. Prefer Herdr's supported live handoff when available; see [Herdr session state and recovery](https://herdr.dev/docs/session-state/).
+3. For Herdr, verify `herdr --version` reports `0.8.0` or newer and confirm health reports a trusted owner-only local API socket. A compatible version mismatch is advisory; protocol incompatibility blocks use. Before restarting, save active pane work: a restart stops the original shells, agents, tests, and other pane processes. Prefer Herdr's supported live handoff when available; see [Herdr session state and recovery](https://herdr.dev/docs/session-state/).
 4. Set `cli.mux.backend` explicitly if auto-selection chose a different installed backend.
 
 ### Picker action fails

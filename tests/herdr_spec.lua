@@ -159,6 +159,9 @@ describe("herdr backend", function()
     vim.env.HERDR_WORKSPACE_ID = nil
     vim.env.HERDR_TAB_ID = nil
     vim.env.HERDR_PANE_ID = nil
+    vim.fn.environ = function()
+      return {}
+    end
     setup_config({ cli = { mux = { backend = "herdr" } } })
   end)
 
@@ -299,8 +302,10 @@ describe("herdr backend", function()
       error("sensitive values must not reach vim.system")
     end
     local commands = {
-      { "herdr", "agent", "start", "ajans:test", "--", "agent", "secret" },
-      { "herdr", "agent", "send", "term-1", "secret prompt" },
+      { "herdr", "workspace", "create", "--env", "TOKEN=secret" },
+      { "herdr", "tab", "create", "--env", "TOKEN=secret" },
+      { "herdr", "pane", "split", "--env", "TOKEN=secret" },
+      { "herdr", "agent", "start", "ajans-pi-0123456789ab", "--kind", "pi", "--pane", "w1:p2", "--" },
       { "herdr", "pane", "send-text", "pane-1", "secret context" },
     }
 
@@ -989,12 +994,13 @@ describe("herdr backend", function()
     assert.is_false(complete)
   end)
 
-  it("builds Ajans-owned Herdr names from a fixed cwd digest", function()
+  it("builds Herdr-valid agent names and descriptive session labels", function()
     local first = new_session({ cwd = "/tmp/one", tool = test_tool({ name = "sixteen-char-tool" }) })
     local second = new_session({ cwd = "/tmp/two", tool = test_tool({ name = "sixteen-char-tool" }) })
 
-    assert.matches("^ajans:sixteen%-char%-tool [0-9a-f]+$", first:agent_name())
-    assert.are.equal(#"ajans:sixteen-char-tool " + 12, #first:agent_name())
+    assert.matches("^ajans%-sixteen%-char%-[0-9a-f]+$", first:agent_name())
+    assert.is_true(#first:agent_name() <= 32)
+    assert.matches("^ajans:sixteen%-char%-tool [0-9a-f]+$", first:session_label())
     assert.are_not.equal(first:agent_name(), second:agent_name())
   end)
 
@@ -1009,9 +1015,14 @@ describe("herdr backend", function()
     end)
   end
 
-  it("creates an isolated workspace transaction and returns direct agent attach argv", function()
+  it("waits for a new root pane before starting a registered agent", function()
     local calls = {}
-    local tool = test_tool({ env = { ZED = "last", ALPHA = "first", REMOVE_ME = false } })
+    local agent_start_attempts = 0
+    local tool = test_tool({
+      name = "pi",
+      cmd = { "pi", "--flag" },
+      env = { ZED = "last", ALPHA = "first", REMOVE_ME = false },
+    })
     local session = new_session({ tool = tool })
     vim.fn.environ = function()
       return {
@@ -1031,26 +1042,25 @@ describe("herdr backend", function()
           type = "workspace_created",
           workspace = { workspace_id = "w1" },
           tab = { tab_id = "t1" },
-          root_pane = { pane_id = "root", terminal_id = "term-root" },
+          root_pane = { pane_id = "root", terminal_id = "term-root", workspace_id = "w1", tab_id = "t1" },
         })
       elseif cmd[2] == "agent" and cmd[3] == "start" then
+        agent_start_attempts = agent_start_attempts + 1
+        if agent_start_attempts == 1 then
+          return failure("agent_pane_busy", "agent target pane root is not an available shell")
+        end
         return success({
           type = "agent_started",
           agent = {
-            terminal_id = "term-agent",
-            pane_id = "agent-pane",
+            name = session:agent_name(),
+            agent = "pi",
+            terminal_id = "term-root",
+            pane_id = "root",
             workspace_id = "w1",
             tab_id = "t1",
             cwd = "/tmp/project",
           },
         })
-      elseif cmd[2] == "pane" and cmd[3] == "process-info" then
-        return success({
-          type = "pane_process_info",
-          process_info = { shell_pid = 100, foreground_processes = { { pid = 101, name = "claude" } } },
-        })
-      elseif cmd[2] == "pane" and cmd[3] == "close" then
-        return completed()
       end
       error("unexpected command: " .. table.concat(cmd, " "))
     end
@@ -1060,31 +1070,75 @@ describe("herdr backend", function()
       error("expected terminal attachment", 2)
     end
 
-    assert.are.same({ "herdr", "agent", "attach", "term-agent" }, attach.cmd)
-    assert.are.equal("herdr term-agent", session.id)
-    assert.are.equal("herdr:term-agent", session.identity)
-    assert.are.equal("agent-pane", session.herdr_pane_id)
+    assert.are.same({ "herdr", "agent", "attach", "term-root" }, attach.cmd)
+    assert.are.equal("herdr term-root", session.id)
+    assert.are.equal("herdr:term-root", session.identity)
+    assert.are.equal("root", session.herdr_pane_id)
     assert.are.same({}, session.pids)
     assert.is_true(session.started)
     assert.is_false(session.external)
+    assert.are.equal(2, agent_start_attempts)
+    assert.matches("^[a-z][a-z0-9_-]+$", session:agent_name())
+    assert.is_true(#session:agent_name() <= 32)
 
     local create = assert(find_call(calls, { "herdr", "workspace", "create" })).cmd
     assert_pair(create, "--cwd", "/tmp/project")
-    assert_pair(create, "--label", session:agent_name())
+    assert_pair(create, "--label", session:session_label())
+    assert_pair(create, "--env", "ALPHA=first")
+    assert_pair(create, "--env", "PARENT_SECRET=per-agent-only")
+    assert_pair(create, "--env", "REMOVE_ME=")
+    assert_pair(create, "--env", "ZED=last")
+    assert.is_false(vim.tbl_contains(create, "HERDR_PANE_ID=host-pane"))
+
     local start = assert(find_call(calls, { "herdr", "agent", "start" })).cmd
-    assert_pair(start, "--workspace", "w1")
-    assert_pair(start, "--tab", "t1")
-    assert_pair(start, "--env", "ALPHA=first")
-    assert_pair(start, "--env", "PARENT_SECRET=per-agent-only")
-    assert_pair(start, "--env", "ZED=last")
-    assert.is_false(vim.tbl_contains(start, "HERDR_PANE_ID=host-pane"))
-    assert.is_false(vim.tbl_contains(start, "REMOVE_ME=old"))
-    for _, key in ipairs({ "NVIM", "NVIM_LISTEN_ADDRESS", "REMOVE_ME", "TMUX", "TMUX_PANE" }) do
-      assert_pair(start, "-u", key)
+    assert_pair(start, "--kind", "pi")
+    assert_pair(start, "--pane", "root")
+    assert.are.same({ "--flag" }, vim.list_slice(start, #start))
+    assert.is_nil(find_call(calls, { "herdr", "pane", "close" }))
+  end)
+
+  it("starts an unsupported tool through escaped shell input", function()
+    local calls = {}
+    local tool = test_tool({
+      name = "aider",
+      cmd = { "aider", "--model", "two words" },
+      env = { TOKEN = "secret" },
+    })
+    local session = new_session({ tool = tool })
+    vim.fn.environ = function()
+      return { PATH = "/usr/bin" }
     end
-    assert.are.same({ "claude", "--flag" }, vim.list_slice(start, #start - 1))
-    local close = assert(find_call(calls, { "herdr", "pane", "close" })).cmd
-    assert.are.equal("root", close[4])
+    Herdr.ensure_server = function()
+      return true
+    end
+    Herdr._run = function(cmd, opts)
+      calls[#calls + 1] = { cmd = vim.deepcopy(cmd), opts = vim.deepcopy(opts or {}) }
+      if cmd[2] == "workspace" and cmd[3] == "create" then
+        return success({
+          type = "workspace_created",
+          workspace = { workspace_id = "w1" },
+          tab = { tab_id = "t1" },
+          root_pane = { pane_id = "root", terminal_id = "term-root", workspace_id = "w1", tab_id = "t1" },
+        })
+      elseif cmd[2] == "pane" and cmd[3] == "send-text" then
+        return success({ type = "pane_send_text" })
+      elseif cmd[2] == "pane" and cmd[3] == "send-keys" then
+        return completed()
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+
+    local attach = session:start()
+
+    assert.are.same({ "herdr", "terminal", "attach", "term-root" }, attach.cmd)
+    assert.is_false(session.herdr_agent)
+    local create = assert(find_call(calls, { "herdr", "workspace", "create" })).cmd
+    assert_pair(create, "--env", "TOKEN=secret")
+    local send = assert(find_call(calls, { "herdr", "pane", "send-text" })).cmd
+    assert.are.equal("exec 'aider' '--model' 'two words'", send[5])
+    assert.is_false(send[5]:find("secret", 1, true) ~= nil)
+    assert.are.same({ "herdr", "pane", "send-keys", "root", "enter" }, calls[#calls].cmd)
+    assert.is_nil(find_call(calls, { "herdr", "agent", "start" }))
   end)
 
   it("rolls back a workspace when agent launch fails", function()
@@ -1104,7 +1158,7 @@ describe("herdr backend", function()
           type = "workspace_created",
           workspace = { workspace_id = "w1" },
           tab = { tab_id = "t1" },
-          root_pane = { pane_id = "root" },
+          root_pane = { pane_id = "root", terminal_id = "term-root", workspace_id = "w1", tab_id = "t1" },
         })
       elseif cmd[2] == "agent" then
         return failure("agent_start_failed", "spawn failed")
@@ -1124,7 +1178,7 @@ describe("herdr backend", function()
     assert.matches("agent_start_failed", errors[1])
   end)
 
-  it("rolls back an isolated workspace when temporary pane cleanup fails", function()
+  it("rolls back an isolated workspace when agent identity mismatches its root pane", function()
     local calls = {}
     local session = new_session()
     Herdr.ensure_server = function()
@@ -1137,15 +1191,13 @@ describe("herdr backend", function()
           type = "workspace_created",
           workspace = { workspace_id = "w1" },
           tab = { tab_id = "t1" },
-          root_pane = { pane_id = "root" },
+          root_pane = { pane_id = "root", terminal_id = "term-root", workspace_id = "w1", tab_id = "t1" },
         })
       elseif cmd[2] == "agent" then
         return success({
           type = "agent_started",
           agent = { terminal_id = "term-1", pane_id = "agent-pane", workspace_id = "w1", tab_id = "t1" },
         })
-      elseif cmd[2] == "pane" and cmd[3] == "close" then
-        return failure("pane_close_failed", "root stayed open")
       elseif cmd[2] == "workspace" and cmd[3] == "close" then
         return completed()
       end
@@ -1171,7 +1223,12 @@ describe("herdr backend", function()
           type = "workspace_created",
           workspace = { workspace_id = "leaked-workspace" },
           tab = { tab_id = "t1" },
-          root_pane = { pane_id = "root" },
+          root_pane = {
+            pane_id = "root",
+            terminal_id = "term-root",
+            workspace_id = "leaked-workspace",
+            tab_id = "t1",
+          },
         })
       elseif cmd[2] == "agent" then
         return failure("agent_start_failed", "spawn failed")
@@ -1189,7 +1246,7 @@ describe("herdr backend", function()
     assert.matches("herdr workspace close leaked%-workspace", errors[#errors])
   end)
 
-  it("creates a Herdr tab for window mode and removes its temporary root pane", function()
+  it("creates a Herdr tab and starts the agent in its root pane", function()
     setup_config({ cli = { mux = { backend = "herdr", create = "window" } } })
     vim.env.HERDR_ENV = "1"
     vim.env.HERDR_WORKSPACE_ID = "host-workspace"
@@ -1205,22 +1262,23 @@ describe("herdr backend", function()
         return success({
           type = "tab_created",
           tab = { tab_id = "new-tab", workspace_id = "host-workspace" },
-          root_pane = { pane_id = "tab-root" },
+          root_pane = {
+            pane_id = "tab-root",
+            terminal_id = "term-window",
+            workspace_id = "host-workspace",
+            tab_id = "new-tab",
+          },
         })
       elseif cmd[2] == "agent" and cmd[3] == "start" then
         return success({
           type = "agent_started",
           agent = {
             terminal_id = "term-window",
-            pane_id = "pane-window",
+            pane_id = "tab-root",
             workspace_id = "host-workspace",
             tab_id = "new-tab",
           },
         })
-      elseif cmd[2] == "pane" and cmd[3] == "process-info" then
-        return success({ type = "pane_process_info", process_info = {} })
-      elseif cmd[2] == "pane" and cmd[3] == "close" then
-        return completed()
       end
       error("unexpected command: " .. table.concat(cmd, " "))
     end
@@ -1232,11 +1290,11 @@ describe("herdr backend", function()
     assert.is_true(session.external)
     local create = assert(find_call(calls, { "herdr", "tab", "create" })).cmd
     assert_pair(create, "--workspace", "host-workspace")
-    assert_pair(create, "--label", session:agent_name())
+    assert_pair(create, "--label", session:session_label())
     local start = assert(find_call(calls, { "herdr", "agent", "start" })).cmd
-    assert_pair(start, "--workspace", "host-workspace")
-    assert_pair(start, "--tab", "new-tab")
-    assert.are.equal("tab-root", assert(find_call(calls, { "herdr", "pane", "close" })).cmd[4])
+    assert_pair(start, "--kind", "claude")
+    assert_pair(start, "--pane", "tab-root")
+    assert.is_nil(find_call(calls, { "herdr", "pane", "close" }))
   end)
 
   it("rolls back a new tab after a partial creation failure", function()
@@ -1255,7 +1313,12 @@ describe("herdr backend", function()
         return success({
           type = "tab_created",
           tab = { tab_id = "new-tab", workspace_id = "host-workspace" },
-          root_pane = { pane_id = "tab-root" },
+          root_pane = {
+            pane_id = "tab-root",
+            terminal_id = "term-window",
+            workspace_id = "host-workspace",
+            tab_id = "new-tab",
+          },
         })
       elseif cmd[2] == "agent" then
         return failure("agent_start_failed", "failed")
@@ -1271,7 +1334,7 @@ describe("herdr backend", function()
     assert.is_not_nil(find_call(calls, { "herdr", "tab", "close", "new-tab" }))
   end)
 
-  it("rolls back a new tab when temporary pane cleanup fails", function()
+  it("rolls back a new tab when agent identity mismatches its root pane", function()
     setup_config({ cli = { mux = { backend = "herdr", create = "window" } } })
     vim.env.HERDR_ENV = "1"
     vim.env.HERDR_WORKSPACE_ID = "host-workspace"
@@ -1288,7 +1351,12 @@ describe("herdr backend", function()
         return success({
           type = "tab_created",
           tab = { tab_id = "new-tab", workspace_id = "host-workspace" },
-          root_pane = { pane_id = "tab-root" },
+          root_pane = {
+            pane_id = "tab-root",
+            terminal_id = "term-window",
+            workspace_id = "host-workspace",
+            tab_id = "new-tab",
+          },
         })
       elseif cmd[2] == "agent" and cmd[3] == "start" then
         return success({
@@ -1300,8 +1368,6 @@ describe("herdr backend", function()
             tab_id = "new-tab",
           },
         })
-      elseif cmd[2] == "pane" and cmd[3] == "close" then
-        return failure("pane_close_failed", "root stayed open")
       elseif cmd[2] == "tab" and cmd[3] == "close" then
         return completed()
       end
@@ -1367,6 +1433,7 @@ describe("herdr backend", function()
       vim.env.HERDR_ENV = "1"
       vim.env.HERDR_WORKSPACE_ID = "host-workspace"
       vim.env.HERDR_TAB_ID = "host-tab"
+      vim.env.HERDR_PANE_ID = "host-pane"
       local calls = {}
       local session = new_session()
       Herdr.ensure_server = function()
@@ -1374,7 +1441,17 @@ describe("herdr backend", function()
       end
       Herdr._run = function(cmd)
         calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
-        if cmd[2] == "agent" and cmd[3] == "start" then
+        if cmd[2] == "pane" and cmd[3] == "split" then
+          return success({
+            type = "pane_split",
+            pane = {
+              terminal_id = "term-split",
+              pane_id = "pane-split",
+              workspace_id = "host-workspace",
+              tab_id = "host-tab",
+            },
+          })
+        elseif cmd[2] == "agent" and cmd[3] == "start" then
           return success({
             type = "agent_started",
             agent = {
@@ -1384,8 +1461,6 @@ describe("herdr backend", function()
               tab_id = "host-tab",
             },
           })
-        elseif cmd[2] == "pane" and cmd[3] == "process-info" then
-          return success({ type = "pane_process_info", process_info = {} })
         elseif cmd[2] == "pane" and cmd[3] == "layout" then
           return success({
             type = "pane_layout",
@@ -1433,10 +1508,11 @@ describe("herdr backend", function()
 
       assert.is_nil(session:start())
 
+      local split = assert(find_call(calls, { "herdr", "pane", "split" })).cmd
+      assert_pair(split, "--pane", "host-pane")
+      assert_pair(split, "--direction", case.split)
       local start = assert(find_call(calls, { "herdr", "agent", "start" })).cmd
-      assert_pair(start, "--workspace", "host-workspace")
-      assert_pair(start, "--tab", "host-tab")
-      assert_pair(start, "--split", case.split)
+      assert_pair(start, "--pane", "pane-split")
       local resize = assert(find_call(calls, { "herdr", "pane", "resize" })).cmd
       assert_pair(resize, "--pane", "pane-split")
       assert_pair(resize, "--direction", case.resize_direction)
@@ -1573,6 +1649,7 @@ describe("herdr backend", function()
     vim.env.HERDR_ENV = "1"
     vim.env.HERDR_WORKSPACE_ID = "host-workspace"
     vim.env.HERDR_TAB_ID = "host-tab"
+    vim.env.HERDR_PANE_ID = "host-pane"
     local calls = {}
     local session = new_session()
     Herdr.ensure_server = function()
@@ -1580,7 +1657,17 @@ describe("herdr backend", function()
     end
     Herdr._run = function(cmd)
       calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
-      if cmd[2] == "agent" then
+      if cmd[2] == "pane" and cmd[3] == "split" then
+        return success({
+          type = "pane_split",
+          pane = {
+            terminal_id = "term-split",
+            pane_id = "pane-split",
+            workspace_id = "host-workspace",
+            tab_id = "host-tab",
+          },
+        })
+      elseif cmd[2] == "agent" then
         return success({
           type = "agent_started",
           agent = {
@@ -1590,8 +1677,6 @@ describe("herdr backend", function()
             tab_id = "host-tab",
           },
         })
-      elseif cmd[3] == "process-info" then
-        return success({ type = "pane_process_info", process_info = {} })
       elseif cmd[3] == "layout" then
         return success({
           type = "pane_layout",
@@ -1655,11 +1740,12 @@ describe("herdr backend", function()
     assert.matches("outside the supported", errors[1])
   end)
 
-  it("closes a pane returned by a malformed split launch response", function()
+  it("closes a pane returned by a malformed split response", function()
     setup_config({ cli = { mux = { backend = "herdr", create = "split" } } })
     vim.env.HERDR_ENV = "1"
     vim.env.HERDR_WORKSPACE_ID = "host-workspace"
     vim.env.HERDR_TAB_ID = "host-tab"
+    vim.env.HERDR_PANE_ID = "host-pane"
     local calls = {}
     local session = new_session()
     Herdr.ensure_server = function()
@@ -1667,10 +1753,10 @@ describe("herdr backend", function()
     end
     Herdr._run = function(cmd)
       calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
-      if cmd[2] == "agent" then
+      if cmd[2] == "pane" and cmd[3] == "split" then
         return success({
-          type = "agent_started",
-          agent = {
+          type = "pane_split",
+          pane = {
             pane_id = "partial-pane",
             workspace_id = "host-workspace",
             tab_id = "host-tab",
@@ -1694,6 +1780,7 @@ describe("herdr backend", function()
     vim.env.HERDR_ENV = "1"
     vim.env.HERDR_WORKSPACE_ID = "host-workspace"
     vim.env.HERDR_TAB_ID = "host-tab"
+    vim.env.HERDR_PANE_ID = "host-pane"
     local calls = {}
     local session = new_session()
     Herdr.ensure_server = function()
@@ -1701,7 +1788,17 @@ describe("herdr backend", function()
     end
     Herdr._run = function(cmd)
       calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
-      if cmd[2] == "agent" then
+      if cmd[2] == "pane" and cmd[3] == "split" then
+        return success({
+          type = "pane_split",
+          pane = {
+            terminal_id = "term-split",
+            pane_id = "pane-split",
+            workspace_id = "host-workspace",
+            tab_id = "host-tab",
+          },
+        })
+      elseif cmd[2] == "agent" then
         return success({
           type = "agent_started",
           agent = {
@@ -1711,8 +1808,6 @@ describe("herdr backend", function()
             tab_id = "host-tab",
           },
         })
-      elseif cmd[2] == "pane" and cmd[3] == "process-info" then
-        return success({ type = "pane_process_info", process_info = {} })
       elseif cmd[2] == "pane" and cmd[3] == "layout" then
         return failure("pane_layout_unavailable", "layout failed")
       elseif cmd[2] == "pane" and cmd[3] == "close" then
@@ -1789,7 +1884,7 @@ describe("herdr backend", function()
     })
     Herdr._run = function(cmd)
       calls[#calls + 1] = vim.deepcopy(cmd)
-      return cmd[2] == "agent" and success({ type = "ok" }) or completed()
+      return cmd[2] == "pane" and cmd[3] == "send-text" and success({ type = "ok" }) or completed()
     end
 
     session:send("first\nsecond")
@@ -1797,9 +1892,9 @@ describe("herdr backend", function()
     session:submit()
 
     assert.are.same({ "herdr", "pane", "send-keys", "pane-1", "escape", "[", "I" }, calls[1])
-    assert.are.same({ "herdr", "agent", "send", "term-1", "first\nsecond" }, calls[2])
+    assert.are.same({ "herdr", "pane", "send-text", "pane-1", "first\nsecond" }, calls[2])
     assert.are.same({ "herdr", "pane", "send-keys", "pane-1", "escape", "[", "I" }, calls[3])
-    assert.are.same({ "herdr", "agent", "send", "term-1", "third" }, calls[4])
+    assert.are.same({ "herdr", "pane", "send-text", "pane-1", "third" }, calls[4])
     assert.are.same({ "herdr", "pane", "send-keys", "pane-1", "enter" }, calls[5])
   end)
 
@@ -1813,7 +1908,7 @@ describe("herdr backend", function()
       herdr_pane_id = "pane-1",
     })
     Herdr._run = function(cmd)
-      if cmd[2] == "agent" and cmd[3] == "send" then
+      if cmd[2] == "pane" and cmd[3] == "send-text" then
         calls[#calls + 1] = "begin:" .. cmd[5]
         if not nested then
           nested = true
@@ -1844,9 +1939,12 @@ describe("herdr backend", function()
     })
     Herdr._run = function(cmd)
       calls[#calls + 1] = vim.deepcopy(cmd)
-      if cmd[2] == "pane" and cmd[3] == "send-text" and failed then
-        failed = false
-        return failure("pane_send_failed", "gone")
+      if cmd[2] == "pane" and cmd[3] == "send-text" then
+        if failed then
+          failed = false
+          return failure("pane_send_failed", "gone")
+        end
+        return success({ type = "ok" })
       end
       return completed()
     end
@@ -2253,7 +2351,7 @@ describe("herdr backend", function()
         return success({ process_info = { foreground_processes = { { pid = 42, cmdline = "custom" } } } })
       end
       sends = sends + 1
-      return completed()
+      return success({ type = "ok" })
     end
     Util.error = function(message)
       reports[#reports + 1] = message
@@ -2279,14 +2377,14 @@ describe("herdr backend", function()
     })
     Herdr._run = function(cmd)
       calls[#calls + 1] = vim.deepcopy(cmd)
-      return failure("agent_send_failed", "gone")
+      return failure("pane_send_failed", "gone")
     end
     Util.error = function() end
 
     assert.is_false(session:send("partial"))
     assert.is_false(session:submit())
     assert.are.equal(1, #calls)
-    assert.are.same({ "herdr", "agent", "send", "term-1", "partial" }, calls[1])
+    assert.are.same({ "herdr", "pane", "send-text", "pane-1", "partial" }, calls[1])
   end)
 
   it("chunks large UTF-8 sends and redacts failed prompt contents", function()

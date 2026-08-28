@@ -22,7 +22,7 @@ Ajans supports tmux and [Herdr](https://herdr.dev) as full session backends. AI 
 - Neovim `>= 0.11.2`
 - One supported session backend:
   - [tmux](https://github.com/tmux/tmux/wiki), or
-  - [Herdr](https://herdr.dev) `>= 0.7.0` on macOS or Linux
+  - [Herdr](https://herdr.dev) `>= 0.8.0` on macOS or Linux
 - One or more AI CLI tools, such as Claude, Codex, Copilot, Antigravity, Opencode, or Qwen
 - Optional: [snacks.nvim](https://github.com/folke/snacks.nvim), Telescope, or fzf-lua for picker workflows
 - Optional: [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects) for `{function}` and `{class}` context

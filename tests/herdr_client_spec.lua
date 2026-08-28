@@ -272,7 +272,7 @@ describe("Herdr client", function()
       return vim.json.encode({ id = request.id, result = { ok = true } })
     end
 
-    local result = Client.run({ "herdr", "agent", "send", "term-1", "secret" })
+    local result = Client.run({ "herdr", "pane", "send-text", "pane-1", "secret" })
 
     assert.are.equal(0, result.code)
     assert.are.equal("/private/tmp/herdr.sock", connected)
@@ -293,15 +293,89 @@ describe("Herdr client", function()
     assert.is_true(Client.validate_socket("/tmp/herdr.sock"))
   end)
 
-  it("sends prompt text through the local JSON socket", function()
+  it("creates a workspace without exposing its environment to a subprocess", function()
     local captured = capture_request()
 
-    local result = Client.run({ "herdr", "agent", "send", "term-1", "secret prompt" })
+    local result = Client.run({
+      "herdr",
+      "workspace",
+      "create",
+      "--cwd",
+      "/tmp/project",
+      "--label",
+      "ajans:pi abc123",
+      "--no-focus",
+      "--env",
+      "TOKEN=secret=value",
+    })
 
     assert.are.equal(0, result.code)
-    assert.are.same({ target = "term-1", text = "secret prompt" }, captured().payload.params)
-    assert.are.equal("agent.send", captured().payload.method)
+    assert.are.same({
+      cwd = "/tmp/project",
+      label = "ajans:pi abc123",
+      focus = false,
+      env = { TOKEN = "secret=value" },
+    }, captured().payload.params)
+    assert.are.equal("workspace.create", captured().payload.method)
     assert.are.equal("/tmp/herdr-test.sock", captured().path)
+  end)
+
+  it("creates a tab without exposing its environment to a subprocess", function()
+    local captured = capture_request()
+
+    local result = Client.run({
+      "herdr",
+      "tab",
+      "create",
+      "--workspace",
+      "w1",
+      "--cwd",
+      "/tmp/project",
+      "--label",
+      "ajans:pi abc123",
+      "--no-focus",
+      "--env",
+      "TOKEN=secret",
+    })
+
+    assert.are.equal(0, result.code)
+    assert.are.same({
+      workspace_id = "w1",
+      cwd = "/tmp/project",
+      label = "ajans:pi abc123",
+      focus = false,
+      env = { TOKEN = "secret" },
+    }, captured().payload.params)
+    assert.are.equal("tab.create", captured().payload.method)
+  end)
+
+  it("splits a pane without exposing its environment to a subprocess", function()
+    local captured = capture_request()
+
+    local result = Client.run({
+      "herdr",
+      "pane",
+      "split",
+      "--pane",
+      "w1:p1",
+      "--direction",
+      "right",
+      "--cwd",
+      "/tmp/project",
+      "--no-focus",
+      "--env",
+      "TOKEN=secret",
+    })
+
+    assert.are.equal(0, result.code)
+    assert.are.same({
+      target_pane_id = "w1:p1",
+      direction = "right",
+      cwd = "/tmp/project",
+      focus = false,
+      env = { TOKEN = "secret" },
+    }, captured().payload.params)
+    assert.are.equal("pane.split", captured().payload.method)
   end)
 
   it("sends custom-pane text through the local JSON socket", function()
@@ -314,46 +388,34 @@ describe("Herdr client", function()
     assert.are.same({ pane_id = "pane-1", text = "secret context" }, captured().payload.params)
   end)
 
-  it("sends launch argv and environment through the local JSON socket", function()
+  it("starts a Herdr 0.8 agent through the local JSON socket", function()
     local captured = capture_request({ result = { agent = { terminal_id = "term-1" } } })
 
     local result = Client.run({
       "herdr",
       "agent",
       "start",
-      "ajans:claude",
-      "--cwd",
-      "/tmp/project",
-      "--workspace",
-      "workspace-1",
-      "--tab",
-      "tab-1",
-      "--split",
-      "right",
-      "--no-focus",
-      "--env",
-      "TOKEN=secret=value",
+      "ajans-pi-0123456789ab",
+      "--kind",
+      "pi",
+      "--pane",
+      "w1:p2",
+      "--timeout",
+      "30000",
       "--",
-      "env",
-      "-u",
-      "OLD_TOKEN",
-      "--",
-      "claude",
-      "--api-key",
+      "--model",
       "secret-arg",
     })
 
     assert.are.equal(0, result.code)
     assert.are.same({
-      name = "ajans:claude",
-      cwd = "/tmp/project",
-      workspace_id = "workspace-1",
-      tab_id = "tab-1",
-      split = "right",
-      focus = false,
-      env = { TOKEN = "secret=value" },
-      argv = { "env", "-u", "OLD_TOKEN", "--", "claude", "--api-key", "secret-arg" },
+      name = "ajans-pi-0123456789ab",
+      kind = "pi",
+      pane_id = "w1:p2",
+      timeout_ms = 30000,
+      args = { "--model", "secret-arg" },
     }, captured().payload.params)
+    assert.are.equal(30000 + Client.REQUEST_TIMEOUT_GRACE, captured().timeout)
   end)
 
   it("rejects a missing Herdr API socket", function()
@@ -361,7 +423,7 @@ describe("Herdr client", function()
       return { running = true }
     end
 
-    local result = Client.run({ "herdr", "agent", "send", "term-1", "prompt" })
+    local result = Client.run({ "herdr", "pane", "send-text", "pane-1", "prompt" })
 
     assert.are.equal(1, result.code)
     assert.matches("missing a running API socket", result.stderr)
@@ -370,7 +432,7 @@ describe("Herdr client", function()
   it("rejects mismatched response IDs", function()
     capture_request({ id = "another-client", result = { ok = true } })
 
-    local result = Client.run({ "herdr", "agent", "send", "term-1", "prompt" })
+    local result = Client.run({ "herdr", "pane", "send-text", "pane-1", "prompt" })
 
     assert.are.equal(1, result.code)
     assert.matches("mismatched response ID", result.stderr)
@@ -388,7 +450,7 @@ describe("Herdr client", function()
       exchanged = true
     end
 
-    local result = Client.run({ "herdr", "agent", "send", "term-1", "secret" })
+    local result = Client.run({ "herdr", "pane", "send-text", "pane-1", "secret" })
 
     assert.are.equal(1, result.code)
     assert.matches("unsafe", result.stderr)
@@ -404,7 +466,7 @@ describe("Herdr client", function()
       exchanged = true
     end
 
-    local result = Client.run({ "herdr", "agent", "send", "term-1", "prompt" })
+    local result = Client.run({ "herdr", "pane", "send-text", "pane-1", "prompt" })
 
     assert.are.equal(1, result.code)
     assert.is_false(exchanged)
@@ -421,20 +483,20 @@ describe("Herdr client", function()
       }
     end
 
-    local result = Client.run({ "herdr", "agent", "send", "term-1", "prompt" })
+    local result = Client.run({ "herdr", "pane", "send-text", "pane-1", "prompt" })
 
     assert.are.equal(0, result.code)
-    assert.are.equal("agent.send", captured().payload.method)
+    assert.are.equal("pane.send_text", captured().payload.method)
   end)
 
   it("propagates Herdr API error envelopes", function()
     local captured = capture_request({ error = { code = "pane_not_found", message = "gone" } })
 
-    local result = Client.run({ "herdr", "agent", "send", "term-1", "prompt" })
+    local result = Client.run({ "herdr", "pane", "send-text", "pane-1", "prompt" })
 
     assert.are.equal(1, result.code)
     assert.matches("pane_not_found", result.stderr)
-    assert.are.equal("agent.send", captured().payload.method)
+    assert.are.equal("pane.send_text", captured().payload.method)
   end)
 
   it("keeps project secrets out of the detached server environment", function()
