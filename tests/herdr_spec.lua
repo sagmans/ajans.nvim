@@ -2,6 +2,8 @@ local Test = require("tests.helpers.test")
 local assert, describe, it = Test.assert, Test.describe, Test.it
 local before_each, after_each = Test.before_each, Test.after_each
 
+local TEST_AGENT_NAME = "ajans-pi-0123456789ab"
+
 local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
 local Herdr = require("ajans.cli.session.herdr")
@@ -1973,6 +1975,36 @@ describe("herdr backend", function()
     assert.are.equal(0, calls)
   end)
 
+  it("targets a managed agent by name for input authorization", function()
+    local tool = test_tool({ name = "pi", cmd = { "pi" } })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "pi"
+    end
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+      tool = tool,
+    })
+    session.herdr_name = TEST_AGENT_NAME
+    Herdr._run = function(cmd)
+      if cmd[2] == "agent" then
+        assert.are.same({ "herdr", "agent", "get", TEST_AGENT_NAME }, cmd)
+        return success({
+          agent = {
+            terminal_id = "term-1",
+            pane_id = "pane-1",
+            name = TEST_AGENT_NAME,
+          },
+        })
+      end
+      return success({ process_info = { foreground_processes = { { pid = 42, cmdline = "pi" } } } })
+    end
+
+    assert.is_true(session:accepts_automated_input())
+  end)
+
   it("authorizes the launched tool after its bootstrap process exits", function()
     local tool = test_tool({ name = "pi", cmd = { "pi" } })
     tool.is_proc = function(_, proc)
@@ -2415,6 +2447,22 @@ describe("herdr backend", function()
     assert.are.equal(secret, calls[1][5] .. calls[2][5])
     assert.is_false(errors[1]:find("secret", 1, true) ~= nil)
     assert.matches("<redacted>", errors[1])
+  end)
+
+  it("targets a managed agent by name for liveness", function()
+    local session = new_session({
+      started = true,
+      herdr_agent = true,
+      herdr_terminal_id = "term-1",
+      herdr_pane_id = "pane-1",
+    })
+    session.herdr_name = TEST_AGENT_NAME
+    Herdr._run = function(cmd)
+      assert.are.same({ "herdr", "agent", "get", TEST_AGENT_NAME }, cmd)
+      return success({ type = "agent_info" })
+    end
+
+    assert.is_true(session:is_running())
   end)
 
   for _, case in ipairs({

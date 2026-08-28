@@ -985,10 +985,16 @@ end
 function M:detach() end
 
 ---@param self ajans.cli.muxer.Herdr
+---@return string?
+local function agent_target(self)
+  return self.herdr_name or self.herdr_terminal_id
+end
+
+---@param self ajans.cli.muxer.Herdr
 ---@return string[]?
 local function liveness_args(self)
-  if self.herdr_agent and self.herdr_terminal_id then
-    return { "agent", "get", self.herdr_terminal_id }
+  if self.herdr_agent and agent_target(self) then
+    return { "agent", "get", agent_target(self) }
   elseif self.herdr_pane_id then
     return { "pane", "get", self.herdr_pane_id }
   end
@@ -1097,7 +1103,7 @@ end
 
 function M:accepts_automated_input()
   if self.herdr_agent then
-    local result = M.request({ "agent", "get", self.herdr_terminal_id }, {
+    local result = M.request({ "agent", "get", agent_target(self) }, {
       notify = false,
       stopped_ok = true,
       system = { timeout = M.LIVENESS_TIMEOUT },
