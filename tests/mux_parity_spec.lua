@@ -475,33 +475,29 @@ local adapters = {
             type = "workspace_created",
             workspace = { workspace_id = "workspace-new" },
             tab = { tab_id = "tab-new" },
-            root_pane = { pane_id = "root-new" },
-          })
-        elseif cmd[2] == "agent" and cmd[3] == "start" then
-          return success({
-            type = "agent_started",
-            agent = {
+            root_pane = {
+              pane_id = "root-new",
               terminal_id = "term-new",
-              pane_id = "pane-new",
               workspace_id = "workspace-new",
               tab_id = "tab-new",
             },
           })
-        elseif cmd[2] == "pane" and cmd[3] == "process-info" then
-          return success({ type = "pane_process_info", process_info = {} })
-        elseif cmd[2] == "pane" and cmd[3] == "close" then
+        elseif cmd[2] == "pane" and cmd[3] == "send-text" then
+          return success({ type = "pane_send_text" })
+        elseif cmd[2] == "pane" and cmd[3] == "send-keys" then
           return completed()
         end
         error("unexpected workspace command")
       end
       local attach = present(embedded:start())
-      assert.are.same({ "herdr", "agent", "attach", "term-new" }, attach.cmd)
+      assert.are.same({ "herdr", "terminal", "attach", "term-new" }, attach.cmd)
       assert.are.equal("workspace", embedded.herdr_placement)
-      local workspace_start = assert(find_call(workspace_calls, { "herdr", "agent", "start" }))
-      assert.is_true(vim.tbl_contains(workspace_start, "SET=value"))
-      assert.is_true(vim.tbl_contains(workspace_start, "UNSET"))
-      assert.is_true(vim.tbl_contains(workspace_start, "contract-agent"))
-      assert.is_not_nil(find_call(workspace_calls, { "herdr", "pane", "close", "root-new" }))
+      local workspace_create = assert(find_call(workspace_calls, { "herdr", "workspace", "create" }))
+      assert.is_true(vim.tbl_contains(workspace_create, "SET=value"))
+      assert.is_true(vim.tbl_contains(workspace_create, "UNSET="))
+      local workspace_send = assert(find_call(workspace_calls, { "herdr", "pane", "send-text" }))
+      assert.are.equal("exec 'contract-agent' '--flag'", workspace_send[5])
+      assert.is_nil(find_call(workspace_calls, { "herdr", "agent", "start" }))
 
       vim.env.HERDR_ENV = "1"
       vim.env.HERDR_WORKSPACE_ID = "workspace-host"
@@ -516,21 +512,16 @@ local adapters = {
           return success({
             type = "tab_created",
             tab = { tab_id = "tab-window" },
-            root_pane = { pane_id = "root-window" },
-          })
-        elseif cmd[2] == "agent" and cmd[3] == "start" then
-          return success({
-            type = "agent_started",
-            agent = {
+            root_pane = {
+              pane_id = "root-window",
               terminal_id = "term-window",
-              pane_id = "pane-window",
               workspace_id = "workspace-host",
               tab_id = "tab-window",
             },
           })
-        elseif cmd[2] == "pane" and cmd[3] == "process-info" then
-          return success({ type = "pane_process_info", process_info = {} })
-        elseif cmd[2] == "pane" and cmd[3] == "close" then
+        elseif cmd[2] == "pane" and cmd[3] == "send-text" then
+          return success({ type = "pane_send_text" })
+        elseif cmd[2] == "pane" and cmd[3] == "send-keys" then
           return completed()
         end
         error("unexpected tab command")
@@ -539,24 +530,30 @@ local adapters = {
       assert.is_true(tab.started)
       assert.are.equal("tab", tab.herdr_placement)
       assert.is_not_nil(find_call(tab_calls, { "herdr", "tab", "create" }))
-      assert.is_not_nil(find_call(tab_calls, { "herdr", "pane", "close", "root-window" }))
+      assert.is_not_nil(find_call(tab_calls, { "herdr", "pane", "send-text", "root-window" }))
+      assert.is_nil(find_call(tab_calls, { "herdr", "agent", "start" }))
 
+      vim.env.HERDR_PANE_ID = "pane-host"
       setup_config("herdr", { create = "split", split = { vertical = true, size = 0.8 } })
       local split_calls = {}
       local split = herdr_session({ external = true })
       split.started = nil
       Herdr._run = function(cmd)
         split_calls[#split_calls + 1] = vim.deepcopy(cmd)
-        if cmd[2] == "agent" and cmd[3] == "start" then
+        if cmd[2] == "pane" and cmd[3] == "split" then
           return success({
-            type = "agent_started",
-            agent = {
+            type = "pane_split",
+            pane = {
               terminal_id = "term-split",
               pane_id = "pane-split",
               workspace_id = "workspace-host",
               tab_id = "tab-host",
             },
           })
+        elseif cmd[2] == "pane" and cmd[3] == "send-text" then
+          return success({ type = "pane_send_text" })
+        elseif cmd[2] == "pane" and cmd[3] == "send-keys" then
+          return completed()
         elseif cmd[2] == "pane" and cmd[3] == "layout" then
           return success({
             type = "pane_layout",
@@ -590,16 +587,15 @@ local adapters = {
               },
             },
           })
-        elseif cmd[2] == "pane" and cmd[3] == "process-info" then
-          return success({ type = "pane_process_info", process_info = {} })
         end
         error("unexpected split command")
       end
       split:start()
       assert.is_true(split.started)
       assert.are.equal("split", split.herdr_placement)
-      local split_start = assert(find_call(split_calls, { "herdr", "agent", "start" }))
-      assert.is_true(vim.tbl_contains(split_start, "right"))
+      local split_create = assert(find_call(split_calls, { "herdr", "pane", "split" }))
+      assert.is_true(vim.tbl_contains(split_create, "right"))
+      assert.is_not_nil(find_call(split_calls, { "herdr", "pane", "send-text", "pane-split" }))
       assert.is_not_nil(find_call(split_calls, { "herdr", "pane", "resize" }))
     end,
     lifecycle = function()
@@ -625,12 +621,12 @@ local adapters = {
       local session = herdr_session({ mux_focus = true })
       Herdr._run = function(cmd)
         calls[#calls + 1] = vim.deepcopy(cmd)
-        return cmd[3] == "send" and success({ type = "ok" }) or completed()
+        return cmd[3] == "send-text" and success({ type = "ok" }) or completed()
       end
       assert.is_true(session:send("line one\nline two"))
       assert.is_true(session:submit())
       assert.are.same({ "herdr", "pane", "send-keys", "pane-1", "escape", "[", "I" }, calls[1])
-      assert.are.same({ "herdr", "agent", "send", "term-1", "line one\nline two" }, calls[2])
+      assert.are.same({ "herdr", "pane", "send-text", "pane-1", "line one\nline two" }, calls[2])
       assert.are.same({ "herdr", "pane", "send-keys", "pane-1", "enter" }, calls[3])
     end,
     input_failure_safety = function()
@@ -639,7 +635,7 @@ local adapters = {
       local session = herdr_session()
       Herdr._run = function(cmd)
         calls[#calls + 1] = vim.deepcopy(cmd)
-        return cmd[3] == "send" and completed("", 1, "agent disappeared") or completed()
+        return cmd[3] == "send-text" and completed("", 1, "agent disappeared") or completed()
       end
 
       assert.is_false(session:send("repository context"))
@@ -725,6 +721,7 @@ describe("multiplexer parity contract", function()
       herdr_env = vim.env.HERDR_ENV,
       workspace_id = vim.env.HERDR_WORKSPACE_ID,
       tab_id = vim.env.HERDR_TAB_ID,
+      pane_id = vim.env.HERDR_PANE_ID,
       herdr_session = vim.env.HERDR_SESSION,
       socket_path = vim.env.HERDR_SOCKET_PATH,
     }
@@ -759,6 +756,7 @@ describe("multiplexer parity contract", function()
     vim.env.HERDR_ENV = originals.herdr_env
     vim.env.HERDR_WORKSPACE_ID = originals.workspace_id
     vim.env.HERDR_TAB_ID = originals.tab_id
+    vim.env.HERDR_PANE_ID = originals.pane_id
     vim.env.HERDR_SESSION = originals.herdr_session
     vim.env.HERDR_SOCKET_PATH = originals.socket_path
     pcall(vim.api.nvim_del_user_command, "Ajans")
