@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.0](https://github.com/sagmans/ajans.nvim/compare/v0.1.0...v0.2.0) (2026-05-25)
+
 ### ⚠ BREAKING CHANGES
 
 * **cli:** replace legacy multiplexer options with `cli.mux.backend = "auto" | "tmux" | "herdr"`; `cli.mux.enabled` is removed and ignored, with no backend-disable value. Remove Ajans CLI mappings and avoid its CLI commands when session integration is not wanted. `auto` may select a running Herdr server instead of tmux
