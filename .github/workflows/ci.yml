@@ -2,13 +2,63 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  ci:
-    uses: folke/github/.github/workflows/ci.yml@main
-    secrets: inherit
-    with:
-      plugin: ajans.nvim
-      repo: sagmans/ajans.nvim
+  stylua:
+    name: Stylua
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6; pinned to prevent mutable action code
+      - uses: JohnnyMorganz/stylua-action@76fd70c03e6340ceaf673366712db9b20560b402 # v5; pinned to prevent mutable action code
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: "2.5.2"
+          args: --check lua tests
+
+  debug:
+    name: Debug Messages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6; pinned to prevent mutable action code
+      - name: Reject debug calls
+        run: |
+          if /bin/grep --line-number -r -P '^(?!\s*--).*\bdd\(' --color=always lua; then
+            echo "Debug messages found"
+            exit 1
+          fi
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6; pinned to prevent mutable action code
+      - uses: ./.github/actions/setup-neovim
+      - name: Install Lua build dependency
+        run: sudo apt-get update && sudo apt-get install -y libreadline-dev
+      - name: Run tests
+        run: ./scripts/test
+
+  docs:
+    name: Docs Drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6; pinned to prevent mutable action code
+      - uses: ./.github/actions/setup-neovim
+      - name: Generate repository docs
+        run: ./scripts/docs
+      - name: Reject stale generated docs
+        run: git diff --exit-code -- CONFIG.md KEYMAPS.md USAGE.md

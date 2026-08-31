@@ -1,0 +1,27 @@
+name: Setup Neovim
+description: Install a pinned supported Neovim release from a verified archive
+
+runs:
+  using: composite
+  steps:
+    - name: Download Neovim
+      shell: bash
+      env:
+        NEOVIM_ARCHIVE: nvim-linux-x86_64.tar.gz
+        NEOVIM_INSTALL_DIR: neovim
+        NEOVIM_RELEASE_BASE_URL: https://github.com/neovim/neovim/releases/download
+        NEOVIM_SHA256: 38a7c6317f94503841096c00e8fde05ef04b9472fc9d7d62b6e033cecd6f7991
+        NEOVIM_STRIP_COMPONENTS: "1"
+        NEOVIM_VERSION: v0.11.7
+      run: |
+        set -euo pipefail
+        archive_path="$RUNNER_TEMP/$NEOVIM_ARCHIVE"
+        install_path="$RUNNER_TEMP/$NEOVIM_INSTALL_DIR"
+        curl --fail --location --proto '=https' --tlsv1.2 \
+          "$NEOVIM_RELEASE_BASE_URL/$NEOVIM_VERSION/$NEOVIM_ARCHIVE" \
+          --output "$archive_path"
+        echo "$NEOVIM_SHA256  $archive_path" | sha256sum --check --strict
+        mkdir -p "$install_path"
+        tar --extract --gzip --file "$archive_path" --directory "$install_path" \
+          --strip-components="$NEOVIM_STRIP_COMPONENTS"
+        echo "$install_path/bin" >> "$GITHUB_PATH"
