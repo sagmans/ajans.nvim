@@ -37,7 +37,9 @@ Notes:
 
 ## Generated docs
 
-Do not edit generated blocks directly. Update source, then run `./scripts/docs`.
+Do not edit generated blocks directly. Update source, then run `./scripts/docs`. CI reruns this command and rejects drift instead of committing generated files.
+
+`doc/ajans.nvim.txt` remains pull-request-reviewed so CI stays read-only. Keep it synchronized when README user-facing behavior changes.
 
 `lua/ajans/docs.lua` maps generated snippets to split docs with `Docs.save(...)`:
 
@@ -87,6 +89,18 @@ Both backend adapters implement `start`, `attach`, `detach`, `sessions`, `send`,
 2. Implement action in `lua/ajans/cli/actions.lua` if it is not a terminal method or Ex command.
 3. Cover behavior in terminal/keymap tests.
 4. Update `KEYMAPS.md`.
+
+## Release process
+
+Ajans releases are prepared and published manually so release metadata remains reviewable and Git tags remain signed.
+
+1. Open a release pull request that promotes `Unreleased` notes into a dated version section.
+2. Merge only after required checks pass and review feedback is resolved.
+3. Create a signed annotated `vX.Y.Z` tag from the merged `main` commit.
+4. Push the tag, then publish a GitHub Release from the matching changelog section.
+5. Verify the remote tag signature, release target, and a clean synchronized `main` branch.
+
+Do not enable release-please or workflow write access. Automated tags, direct workflow pushes, and generated release pull requests bypass the repository's signing and review requirements.
 
 ## Validation checklist
 

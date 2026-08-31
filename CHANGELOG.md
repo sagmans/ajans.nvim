@@ -19,7 +19,11 @@
 * **herdr:** use the 0.8 pane-first agent API and escaped shell fallback so new Pi and custom-tool sessions start and accept prompt input
 * **diagnostics:** add portable test-framework typing and repair narrow LuaLS contracts without changing runtime behavior
 
-## [2.3.0](https://github.com/assagman/ajans.nvim/compare/v2.2.0...v2.3.0) (2026-03-20)
+## Archived upstream history
+
+The entries below were inherited from `sidekick.nvim`. They are retained only for provenance and are not Ajans releases. Ajans versioning starts at `v0.1.0`.
+
+## Upstream [2.3.0](https://github.com/assagman/ajans.nvim/compare/v2.2.0...v2.3.0) (2026-03-20)
 
 
 ### Features
@@ -32,7 +36,7 @@
 * **cli:** incorrect range when on same row. Closes [#186](https://github.com/assagman/ajans.nvim/issues/186). Fixes [#184](https://github.com/assagman/ajans.nvim/issues/184) ([ff8ef47](https://github.com/assagman/ajans.nvim/commit/ff8ef479ff6b2f560cfbca0d8b4b8b4593969ab0))
 * **docs:** update Claude installation instructions ([#255](https://github.com/assagman/ajans.nvim/issues/255)) ([43c7a11](https://github.com/assagman/ajans.nvim/commit/43c7a11b397afc7cc3c14113a52811a0d32ef6bf))
 
-## [2.2.0](https://github.com/assagman/ajans.nvim/compare/v2.1.0...v2.2.0) (2026-03-20)
+## Upstream [2.2.0](https://github.com/assagman/ajans.nvim/compare/v2.1.0...v2.2.0) (2026-03-20)
 
 
 ### Features
@@ -51,7 +55,7 @@
 * **terminal:** ready check should not fail if cli window is closed. Fixes [#252](https://github.com/assagman/ajans.nvim/issues/252) ([6b69c42](https://github.com/assagman/ajans.nvim/commit/6b69c42031950164b208b1abf78018ab4a86cdec))
 * **treesitter:** dont use treesitter stringbuffers ([317ada1](https://github.com/assagman/ajans.nvim/commit/317ada137f2b34cccc872b68f0a29d987cbce438))
 
-## [2.1.0](https://github.com/assagman/ajans.nvim/compare/v2.0.0...v2.1.0) (2025-10-23)
+## Upstream [2.1.0](https://github.com/assagman/ajans.nvim/compare/v2.0.0...v2.1.0) (2025-10-23)
 
 
 ### Features
@@ -80,7 +84,7 @@
 * **terminal:** increase initial send delay when opening the terminal. Closes [#150](https://github.com/assagman/ajans.nvim/issues/150) ([e98008f](https://github.com/assagman/ajans.nvim/commit/e98008f9dcb504b745e465169196e1e1b26028da))
 * **terminal:** only use scrollback buffer when needed ([9d9d8cc](https://github.com/assagman/ajans.nvim/commit/9d9d8cca622d12d81c58cd10b51a428e2fc2cdd7))
 
-## [2.0.0](https://github.com/assagman/ajans.nvim/compare/v1.3.0...v2.0.0) (2025-10-17)
+## Upstream [2.0.0](https://github.com/assagman/ajans.nvim/compare/v1.3.0...v2.0.0) (2025-10-17)
 
 
 ### ⚠ BREAKING CHANGES
@@ -148,7 +152,7 @@
 
 * **terminal:** only load scrollback buffer when needed ([628c3d0](https://github.com/assagman/ajans.nvim/commit/628c3d001e8697debdbd36dfed6441e7fe6fffc5))
 
-## [1.3.0](https://github.com/assagman/ajans.nvim/compare/v1.2.0...v1.3.0) (2025-10-08)
+## Upstream [1.3.0](https://github.com/assagman/ajans.nvim/compare/v1.2.0...v1.3.0) (2025-10-08)
 
 
 ### Features
@@ -180,7 +184,7 @@
 * **tmux:** set tool env vars. Closes [#62](https://github.com/assagman/ajans.nvim/issues/62) ([e869205](https://github.com/assagman/ajans.nvim/commit/e869205ff05a8defec31175e0f7f8f923e13cde6))
 * **tmux:** use load-buffer instead of set-buffer to prevent issues with non-escaped text ([de62ed1](https://github.com/assagman/ajans.nvim/commit/de62ed1804897028cd3b0467f10d8f41dc8996db))
 
-## [1.2.0](https://github.com/assagman/ajans.nvim/compare/v1.1.0...v1.2.0) (2025-10-02)
+## Upstream [1.2.0](https://github.com/assagman/ajans.nvim/compare/v1.1.0...v1.2.0) (2025-10-02)
 
 
 ### Features
@@ -226,7 +230,7 @@
 * **terminal:** use vim environ instead of uv ([0d99706](https://github.com/assagman/ajans.nvim/commit/0d997060670028544438fa3eb4d26c04492af1e7))
 * **zellij:** disable session serialization for AI tools ([71d17b9](https://github.com/assagman/ajans.nvim/commit/71d17b92648b84fbe654fec07934fd5dbef330e4))
 
-## [1.1.0](https://github.com/assagman/ajans.nvim/compare/v1.0.0...v1.1.0) (2025-09-29)
+## Upstream [1.1.0](https://github.com/assagman/ajans.nvim/compare/v1.0.0...v1.1.0) (2025-09-29)
 
 
 ### Features
@@ -258,7 +262,7 @@
 * **ui:** show only one sign ([f4545fa](https://github.com/assagman/ajans.nvim/commit/f4545faa29a02ddaf6ac8752b81d219ace7b4640))
 * **watch:** disable debug ([cd69b41](https://github.com/assagman/ajans.nvim/commit/cd69b416dba425053545f5518610aa6d5e310de2))
 
-## 1.0.0 (2025-09-27)
+## Upstream 1.0.0 (2025-09-27)
 
 
 ### Features
