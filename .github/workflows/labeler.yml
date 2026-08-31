@@ -1,8 +1,100 @@
-name: "PR Labeler"
+name: PR Size Labeler
+
 on:
-  - pull_request_target
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: pr-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  labeler:
-    uses: folke/github/.github/workflows/labeler.yml@main
-    secrets: inherit
+  size-labeler:
+    name: Label PR size
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8; pinned to prevent mutable action code
+        env:
+          ALREADY_EXISTS_STATUS: "422"
+          INITIAL_SIZE: "0"
+          L_LABEL: size/l
+          L_MAX_SIZE: "100"
+          M_LABEL: size/m
+          M_MAX_SIZE: "50"
+          NOT_FOUND_STATUS: "404"
+          PER_PAGE: "100"
+          S_LABEL: size/s
+          S_MAX_SIZE: "10"
+          SIZE_LABEL_COLOR: c5def5
+          SIZE_LABEL_DESCRIPTION: Pull request size classification
+          XL_LABEL: size/xl
+          XS_LABEL: size/xs
+          XS_MAX_SIZE: "3"
+        with:
+          script: |
+            const definitions = [
+              { label: process.env.XS_LABEL, max: Number(process.env.XS_MAX_SIZE) },
+              { label: process.env.S_LABEL, max: Number(process.env.S_MAX_SIZE) },
+              { label: process.env.M_LABEL, max: Number(process.env.M_MAX_SIZE) },
+              { label: process.env.L_LABEL, max: Number(process.env.L_MAX_SIZE) },
+            ];
+            const sizeLabels = [...definitions.map(({ label }) => label), process.env.XL_LABEL];
+            const { owner, repo } = context.repo;
+            const pullNumber = context.payload.pull_request.number;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: pullNumber,
+              per_page: Number(process.env.PER_PAGE),
+            });
+            const size = files.reduce(
+              (total, file) => total + file.changes,
+              Number(process.env.INITIAL_SIZE),
+            );
+            const target = definitions.find(({ max }) => size <= max)?.label ?? process.env.XL_LABEL;
+
+            for (const label of sizeLabels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: label });
+              } catch (error) {
+                if (error.status !== Number(process.env.NOT_FOUND_STATUS)) throw error;
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: label,
+                    color: process.env.SIZE_LABEL_COLOR,
+                    description: process.env.SIZE_LABEL_DESCRIPTION,
+                  });
+                } catch (createError) {
+                  if (createError.status !== Number(process.env.ALREADY_EXISTS_STATUS)) {
+                    throw createError;
+                  }
+                }
+              }
+            }
+
+            const current = context.payload.pull_request.labels.map(({ name }) => name);
+            const obsolete = current.filter((name) => sizeLabels.includes(name) && name !== target);
+            for (const label of obsolete) {
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: pullNumber,
+                name: label,
+              });
+            }
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: pullNumber,
+              labels: [target],
+            });
