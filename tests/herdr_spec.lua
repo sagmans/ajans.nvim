@@ -1091,6 +1091,8 @@ describe("herdr backend", function()
     assert_pair(create, "--env", "REMOVE_ME=")
     assert_pair(create, "--env", "ZED=last")
     assert.is_false(vim.tbl_contains(create, "HERDR_PANE_ID=host-pane"))
+    assert.is_true(vim.tbl_contains(create, "--no-focus"))
+    assert.is_false(vim.tbl_contains(create, "--focus"))
 
     local start = assert(find_call(calls, { "herdr", "agent", "start" })).cmd
     assert_pair(start, "--kind", "pi")
@@ -1293,10 +1295,57 @@ describe("herdr backend", function()
     local create = assert(find_call(calls, { "herdr", "tab", "create" })).cmd
     assert_pair(create, "--workspace", "host-workspace")
     assert_pair(create, "--label", session:session_label())
+    assert.is_true(vim.tbl_contains(create, "--focus"))
+    assert.is_false(vim.tbl_contains(create, "--no-focus"))
     local start = assert(find_call(calls, { "herdr", "agent", "start" })).cmd
     assert_pair(start, "--kind", "claude")
     assert_pair(start, "--pane", "tab-root")
     assert.is_nil(find_call(calls, { "herdr", "pane", "close" }))
+  end)
+
+  it("keeps focus on the host tab when creating a tab with focus disabled", function()
+    setup_config({ cli = { mux = { backend = "herdr", create = "window", focus = false } } })
+    vim.env.HERDR_ENV = "1"
+    vim.env.HERDR_WORKSPACE_ID = "host-workspace"
+    vim.env.HERDR_TAB_ID = "host-tab"
+    local calls = {}
+    local session = new_session()
+    Herdr.ensure_server = function()
+      return true
+    end
+    Herdr._run = function(cmd)
+      calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
+      if cmd[2] == "tab" and cmd[3] == "create" then
+        return success({
+          type = "tab_created",
+          tab = { tab_id = "new-tab", workspace_id = "host-workspace" },
+          root_pane = {
+            pane_id = "tab-root",
+            terminal_id = "term-window",
+            workspace_id = "host-workspace",
+            tab_id = "new-tab",
+          },
+        })
+      elseif cmd[2] == "agent" and cmd[3] == "start" then
+        return success({
+          type = "agent_started",
+          agent = {
+            terminal_id = "term-window",
+            pane_id = "tab-root",
+            workspace_id = "host-workspace",
+            tab_id = "new-tab",
+          },
+        })
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+    Util.info = function() end
+
+    session:start()
+
+    local create = assert(find_call(calls, { "herdr", "tab", "create" })).cmd
+    assert.is_true(vim.tbl_contains(create, "--no-focus"))
+    assert.is_false(vim.tbl_contains(create, "--focus"))
   end)
 
   it("rolls back a new tab after a partial creation failure", function()
@@ -1513,6 +1562,8 @@ describe("herdr backend", function()
       local split = assert(find_call(calls, { "herdr", "pane", "split" })).cmd
       assert_pair(split, "--pane", "host-pane")
       assert_pair(split, "--direction", case.split)
+      assert.is_true(vim.tbl_contains(split, "--focus"))
+      assert.is_false(vim.tbl_contains(split, "--no-focus"))
       local start = assert(find_call(calls, { "herdr", "agent", "start" })).cmd
       assert_pair(start, "--pane", "pane-split")
       local resize = assert(find_call(calls, { "herdr", "pane", "resize" })).cmd
@@ -1522,6 +1573,72 @@ describe("herdr backend", function()
     end)
   end
 
+  it("keeps focus on the host pane when creating a split with focus disabled", function()
+    setup_config({ cli = { mux = { backend = "herdr", create = "split", focus = false } } })
+    vim.env.HERDR_ENV = "1"
+    vim.env.HERDR_WORKSPACE_ID = "host-workspace"
+    vim.env.HERDR_TAB_ID = "host-tab"
+    vim.env.HERDR_PANE_ID = "host-pane"
+    local calls = {}
+    local session = new_session()
+    Herdr.ensure_server = function()
+      return true
+    end
+    Herdr._run = function(cmd)
+      calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
+      if cmd[2] == "pane" and cmd[3] == "split" then
+        return success({
+          type = "pane_split",
+          pane = {
+            terminal_id = "term-split",
+            pane_id = "pane-split",
+            workspace_id = "host-workspace",
+            tab_id = "host-tab",
+          },
+        })
+      elseif cmd[2] == "agent" and cmd[3] == "start" then
+        return success({
+          type = "agent_started",
+          agent = {
+            terminal_id = "term-split",
+            pane_id = "pane-split",
+            workspace_id = "host-workspace",
+            tab_id = "host-tab",
+          },
+        })
+      elseif cmd[2] == "pane" and cmd[3] == "layout" then
+        return success({
+          type = "pane_layout",
+          layout = {
+            area = { x = 0, y = 0, width = 200, height = 80 },
+            panes = { { pane_id = "pane-split", rect = { x = 100, y = 0, width = 100, height = 80 } } },
+            splits = {
+              {
+                id = "outer",
+                direction = "down",
+                ratio = 0.5,
+                rect = { x = 0, y = 0, width = 200, height = 80 },
+              },
+              {
+                id = "immediate",
+                direction = "right",
+                ratio = 0.5,
+                rect = { x = 0, y = 0, width = 200, height = 80 },
+              },
+            },
+          },
+        })
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+    Util.info = function() end
+
+    assert.is_nil(session:start())
+
+    local split = assert(find_call(calls, { "herdr", "pane", "split" })).cmd
+    assert.is_true(vim.tbl_contains(split, "--no-focus"))
+    assert.is_false(vim.tbl_contains(split, "--focus"))
+  end)
   for _, case in ipairs({
     { name = "already-sized no-op", size = 0.5, resize = nil, expected = true },
     {

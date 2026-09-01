@@ -58,12 +58,12 @@ function M:start()
     vim.list_extend(cmd, { ";", "set-option", "detach-on-destroy", "on" })
     return { cmd = cmd }, true
   elseif Config.cli.mux.create == "window" then
-    local cmd = { "tmux", "new-window", "-dP", "-c", self.cwd, "-F", PANE_FORMAT }
+    local cmd = { "tmux", "new-window", Config.cli.mux.focus and "-P" or "-dP", "-c", self.cwd, "-F", PANE_FORMAT }
     self:add_cmd(cmd)
     self:spawn(cmd)
     Util.info(("Started **%s** in a new tmux window"):format(self.tool.name))
   elseif Config.cli.mux.create == "split" then
-    local cmd = { "tmux", "split-window", "-dP", "-c", self.cwd, "-F", PANE_FORMAT }
+    local cmd = { "tmux", "split-window", Config.cli.mux.focus and "-P" or "-dP", "-c", self.cwd, "-F", PANE_FORMAT }
     cmd[#cmd + 1] = Config.cli.mux.split.vertical and "-h" or "-v"
     local size = Config.cli.mux.split.size
     vim.list_extend(cmd, { "-l", tostring(size <= 1 and ((size * 100) .. "%") or size) })

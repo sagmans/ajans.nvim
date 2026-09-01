@@ -65,6 +65,8 @@ local defaults = {
       -- window: create a tmux window or Herdr tab when hosted by the backend
       -- split: create a split when hosted by the backend
       create = "split", ---@type "terminal"|"window"|"split"
+      -- focus: focus newly created splits and windows in the backend when hosted
+      focus = true, ---@type boolean
       split = {
         vertical = true, -- vertical or horizontal split
         size = 0.5, -- fraction (<= 1), or cells (> 1); each backend validates supported bounds

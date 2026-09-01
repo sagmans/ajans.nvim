@@ -942,20 +942,49 @@ describe("session mux", function()
     assert.are.equal("%2", session.tmux_pane_id)
     assert.are.equal(4321, session.tmux_pid)
     assert.are.equal("new-window", exec_calls[1].cmd[2])
+    assert.is_true(vim.tbl_contains(exec_calls[1].cmd, "-P"))
+    assert.is_false(vim.tbl_contains(exec_calls[1].cmd, "-dP"))
     assert_cmd_pair(exec_calls[1].cmd, "-c", cwd)
     assert.is_true(vim.tbl_contains(exec_calls[1].cmd, "claude"))
+  end)
+
+  it("keeps focus on the current window when creating a tmux window with focus disabled", function()
+    local cwd = vim.uv.cwd()
+    local exec_calls = {}
+    vim.env.TMUX = "/tmp/tmux-1000/default,1,0"
+    setup_config({ cli = { mux = { create = "window", focus = false } } })
+    Session.backends = {}
+    ProductionSession.register("tmux", require("ajans.cli.session.tmux"))
+    Util.exec = function(cmd, opts)
+      exec_calls[#exec_calls + 1] = { cmd = vim.deepcopy(cmd), opts = vim.deepcopy(opts or {}) }
+      return { ("$1:%%2:4321:main:%s"):format(cwd) }
+    end
+    Util.info = function() end
+
+    local session = Session.new({ tool = test_tool(), cwd = cwd })
+    session:start()
+
+    assert.is_true(vim.tbl_contains(exec_calls[1].cmd, "-dP"))
+    assert.is_false(vim.tbl_contains(exec_calls[1].cmd, "-P"))
   end)
 
   for _, case in ipairs({
     { name = "vertical percent", split = { vertical = true, size = 0.5 }, flag = "-h", size = "50%" },
     { name = "small vertical percent", split = { vertical = true, size = 0.05 }, flag = "-h", size = "5%" },
     { name = "horizontal cells", split = { vertical = false, size = 20 }, flag = "-v", size = "20" },
+    {
+      name = "horizontal cells without focus",
+      split = { vertical = false, size = 20 },
+      flag = "-v",
+      size = "20",
+      focus = false,
+    },
   }) do
     it("starts a tmux split inside tmux with " .. case.name, function()
       local cwd = vim.uv.cwd()
       local exec_calls = {}
       vim.env.TMUX = "/tmp/tmux-1000/default,1,0"
-      setup_config({ cli = { mux = { create = "split", split = case.split } } })
+      setup_config({ cli = { mux = { create = "split", focus = case.focus, split = case.split } } })
       Session.backends = {}
       ProductionSession.register("tmux", require("ajans.cli.session.tmux"))
       Util.exec = function(cmd, opts)
@@ -975,6 +1004,13 @@ describe("session mux", function()
       assert.is_true(vim.tbl_contains(exec_calls[1].cmd, case.flag))
       assert_cmd_pair(exec_calls[1].cmd, "-l", case.size)
       assert_cmd_pair(exec_calls[1].cmd, "-c", cwd)
+      if case.focus == false then
+        assert.is_true(vim.tbl_contains(exec_calls[1].cmd, "-dP"))
+        assert.is_false(vim.tbl_contains(exec_calls[1].cmd, "-P"))
+      else
+        assert.is_true(vim.tbl_contains(exec_calls[1].cmd, "-P"))
+        assert.is_false(vim.tbl_contains(exec_calls[1].cmd, "-dP"))
+      end
     end)
   end
 end)

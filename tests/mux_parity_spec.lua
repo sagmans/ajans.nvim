@@ -230,6 +230,10 @@ local adapters = {
       assert.are.equal("split-window", spawned[2][2])
       assert.is_true(vim.tbl_contains(spawned[2], "-v"))
       assert.is_true(vim.tbl_contains(spawned[2], "20"))
+      for index = 1, 2 do
+        assert.is_true(vim.tbl_contains(spawned[index], "-P"))
+        assert.is_false(vim.tbl_contains(spawned[index], "-dP"))
+      end
     end,
     lifecycle = function()
       setup_config("tmux")
@@ -497,6 +501,8 @@ local adapters = {
       assert.is_true(vim.tbl_contains(workspace_create, "UNSET="))
       local workspace_send = assert(find_call(workspace_calls, { "herdr", "pane", "send-text" }))
       assert.are.equal("exec 'contract-agent' '--flag'", workspace_send[5])
+      assert.is_true(vim.tbl_contains(workspace_create, "--no-focus"))
+      assert.is_false(vim.tbl_contains(workspace_create, "--focus"))
       assert.is_nil(find_call(workspace_calls, { "herdr", "agent", "start" }))
 
       vim.env.HERDR_ENV = "1"
@@ -529,7 +535,9 @@ local adapters = {
       tab:start()
       assert.is_true(tab.started)
       assert.are.equal("tab", tab.herdr_placement)
-      assert.is_not_nil(find_call(tab_calls, { "herdr", "tab", "create" }))
+      local tab_create = assert(find_call(tab_calls, { "herdr", "tab", "create" }))
+      assert.is_true(vim.tbl_contains(tab_create, "--focus"))
+      assert.is_false(vim.tbl_contains(tab_create, "--no-focus"))
       assert.is_not_nil(find_call(tab_calls, { "herdr", "pane", "send-text", "root-window" }))
       assert.is_nil(find_call(tab_calls, { "herdr", "agent", "start" }))
 
@@ -595,6 +603,8 @@ local adapters = {
       assert.are.equal("split", split.herdr_placement)
       local split_create = assert(find_call(split_calls, { "herdr", "pane", "split" }))
       assert.is_true(vim.tbl_contains(split_create, "right"))
+      assert.is_true(vim.tbl_contains(split_create, "--focus"))
+      assert.is_false(vim.tbl_contains(split_create, "--no-focus"))
       assert.is_not_nil(find_call(split_calls, { "herdr", "pane", "send-text", "pane-split" }))
       assert.is_not_nil(find_call(split_calls, { "herdr", "pane", "resize" }))
     end,
