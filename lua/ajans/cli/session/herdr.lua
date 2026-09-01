@@ -720,6 +720,11 @@ rollback = function(kind, id)
   return false
 end
 
+---@return string
+local function create_focus_flag()
+  return Config.cli.mux.focus and "--focus" or "--no-focus"
+end
+
 ---@return ajans.cli.terminal.Cmd? cmd
 ---@return boolean started
 function M:start_workspace()
@@ -786,7 +791,7 @@ function M:start_tab()
     self.cwd,
     "--label",
     self:session_label(),
-    "--no-focus",
+    create_focus_flag(),
   })
   local result = M.request(args, { redact = true })
   if not result then
@@ -920,7 +925,7 @@ function M:start_split()
     direction,
     "--cwd",
     self.cwd,
-    "--no-focus",
+    create_focus_flag(),
   })
   local result = M.request(args, { redact = true })
   if not result then

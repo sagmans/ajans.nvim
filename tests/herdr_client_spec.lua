@@ -378,6 +378,86 @@ describe("Herdr client", function()
     assert.are.equal("pane.split", captured().payload.method)
   end)
 
+  for _, case in ipairs({
+    {
+      name = "workspace",
+      cmd = {
+        "herdr",
+        "workspace",
+        "create",
+        "--cwd",
+        "/tmp/project",
+        "--label",
+        "ajans:pi abc123",
+        "--focus",
+        "--env",
+        "TOKEN=secret",
+      },
+      method = "workspace.create",
+      expected = { cwd = "/tmp/project", label = "ajans:pi abc123", focus = true, env = { TOKEN = "secret" } },
+    },
+    {
+      name = "tab",
+      cmd = {
+        "herdr",
+        "tab",
+        "create",
+        "--workspace",
+        "w1",
+        "--cwd",
+        "/tmp/project",
+        "--label",
+        "ajans:pi abc123",
+        "--focus",
+        "--env",
+        "TOKEN=secret",
+      },
+      method = "tab.create",
+      expected = {
+        workspace_id = "w1",
+        cwd = "/tmp/project",
+        label = "ajans:pi abc123",
+        focus = true,
+        env = { TOKEN = "secret" },
+      },
+    },
+    {
+      name = "pane split",
+      cmd = {
+        "herdr",
+        "pane",
+        "split",
+        "--pane",
+        "w1:p1",
+        "--direction",
+        "right",
+        "--cwd",
+        "/tmp/project",
+        "--focus",
+        "--env",
+        "TOKEN=secret",
+      },
+      method = "pane.split",
+      expected = {
+        target_pane_id = "w1:p1",
+        direction = "right",
+        cwd = "/tmp/project",
+        focus = true,
+        env = { TOKEN = "secret" },
+      },
+    },
+  }) do
+    it("passes focus to the API when creating a " .. case.name, function()
+      local captured = capture_request()
+
+      local result = Client.run(case.cmd)
+
+      assert.are.equal(0, result.code)
+      assert.are.same(case.expected, captured().payload.params)
+      assert.are.equal(case.method, captured().payload.method)
+    end)
+  end
+
   it("sends custom-pane text through the local JSON socket", function()
     local captured = capture_request()
 
