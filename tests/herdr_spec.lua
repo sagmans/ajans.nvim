@@ -2457,6 +2457,131 @@ describe("herdr backend", function()
     assert.are.equal(200, session._authorized_pid)
   end)
 
+  local function ready_gated_session(dump)
+    local tool = test_tool({ name = "antigravity", cmd = { "agy" } })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "agy"
+    end
+    tool.mux_ready = {
+      required = { "? for shortcuts" },
+      blocked = { "Do you trust the contents of this project" },
+    }
+    local session = new_session({
+      tool = tool,
+      started = true,
+      herdr_agent = false,
+      herdr_pane_id = "pane-1",
+    })
+    Herdr._run = function(cmd)
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = 200, cmdline = "agy" } } } })
+      elseif cmd[2] == "pane" and cmd[3] == "read" then
+        if dump == nil then
+          return completed("", 1, "pane vanished")
+        end
+        return completed(dump)
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+    return session
+  end
+
+  for _, case in ipairs({
+    {
+      label = "while the tool shows a boot splash",
+      dump = "Welcome to the Antigravity CLI.\n Signing in...",
+      expected = false,
+    },
+    {
+      label = "while the tool shows the folder trust dialog",
+      dump = "Do you trust the contents of this project?\n> Yes, I trust this folder",
+      expected = false,
+    },
+    {
+      label = "when a blocked screen also contains the ready footer",
+      dump = "Do you trust the contents of this project?\n? for shortcuts",
+      expected = false,
+    },
+    {
+      label = "once the tool shows its input footer",
+      dump = "Antigravity CLI 1.1.25\n> Accept-edits mode\n? for shortcuts",
+      expected = true,
+    },
+    { label = "when the pane screen cannot be read", dump = nil, expected = false },
+  }) do
+    it("holds automated input " .. case.label, function()
+      local session = ready_gated_session(case.dump)
+
+      assert.are.equal(case.expected, session:accepts_automated_input())
+    end)
+  end
+
+  it("waits for a settling screen instead of typing into it", function()
+    local tool = test_tool({ name = "antigravity", cmd = { "agy" } })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "agy"
+    end
+    tool.mux_ready = { required = { "? for shortcuts" } }
+    local session = new_session({
+      tool = tool,
+      started = true,
+      herdr_agent = false,
+      herdr_pane_id = "pane-1",
+    })
+    session.fresh = true
+    local phase = "booting"
+    Herdr._run = function(cmd)
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = 200, cmdline = "agy" } } } })
+      elseif cmd[2] == "pane" and cmd[3] == "read" then
+        if phase == "booting" then
+          return completed("Welcome to the Antigravity CLI.\n Signing in...")
+        end
+        return completed("Antigravity CLI 1.1.25\n? for shortcuts")
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+    local deferred
+    local accepted
+    vim.uv.now = function()
+      return 0
+    end
+    vim.defer_fn = function(callback)
+      deferred = callback
+      return 1
+    end
+
+    session:authorize_automated_input(function(value)
+      accepted = value
+    end)
+    assert.is_nil(accepted)
+
+    phase = "ready"
+    deferred()
+    assert.is_true(accepted)
+  end)
+
+  it("skips the screen gate for tools without readiness markers", function()
+    local tool = test_tool({ name = "pi", cmd = { "pi" } })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "pi"
+    end
+    local session = new_session({
+      tool = tool,
+      started = true,
+      herdr_agent = false,
+      herdr_pane_id = "pane-1",
+    })
+    Herdr._run = function(cmd)
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = 200, cmdline = "pi" } } } })
+      end
+      error("screen reads must not happen without markers: " .. table.concat(cmd, " "))
+    end
+
+    assert.is_true(session:accepts_automated_input())
+  end)
+
   it("times out fresh authorization exactly once", function()
     local tool = test_tool({ name = "pi", cmd = { "pi" } })
     tool.is_proc = function()

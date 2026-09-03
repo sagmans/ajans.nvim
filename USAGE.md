@@ -352,6 +352,8 @@ Ajans never types into an agent it cannot verify. If a pane is stuck on sign-in,
 
 ### Herdr integration warnings
 
+For `antigravity`, Ajans also holds automated input until Agy's own screen settles: sign-in restoration and folder-trust screens swallow typed text, so prompts wait for the stable input footer instead. If Agy shows a trust screen, approve it manually once; Ajans never approves trust prompts.
+
 For `pi` and `antigravity`, Ajans reads `herdr integration status` and warns once when the integration is missing or stale, including the exact `herdr integration install` command. Integrations improve agent lifecycle reporting only; they never sign in, trust folders, or authorize terminal input. Ajans never installs or modifies them itself.
 
 ### Picker action fails

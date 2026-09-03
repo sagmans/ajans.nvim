@@ -59,6 +59,7 @@ end
 ---@field keys? table<string, ajans.cli.Keymap|false>
 ---@field is_proc? (fun(self:ajans.cli.Tool, proc:ajans.cli.ProcessMatch):boolean)|string Regex or function to identify a running process
 ---@field mux_focus? boolean wether the tool needs to be focused in order to receive input
+---@field mux_ready? { required?: string[], blocked?: string[] } screen markers that must gate automated input
 ---@field format? fun(text:ajans.Text[], str:string):string?
 ---@field native_scroll? boolean whether the tool handles scrolling natively
 

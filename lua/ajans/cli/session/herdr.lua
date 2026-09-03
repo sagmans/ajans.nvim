@@ -36,7 +36,10 @@ M.STARTUP_INTERVAL = 100
 M.COMMAND_TIMEOUT = 5000
 M.LIVENESS_TIMEOUT = 250
 M.LIVENESS_ERROR_INTERVAL = 30000
-M.INPUT_READY_TIMEOUT = 5000
+-- Slow TUI boots (sign-in restoration, folder trust) need more than a quick
+-- poll before refusal; the wait only delays a refusal, never a delivery.
+M.INPUT_READY_TIMEOUT = 15000
+M.SCREEN_READY_LINES = 40
 M.INPUT_READY_INTERVAL = 100
 M.PANE_READY_TIMEOUT = 5000
 M.PANE_READY_INTERVAL = 100
@@ -1174,6 +1177,42 @@ function M:is_running_async(callback)
   end
 end
 
+--- Screen-based input readiness: a matching process is not proof the TUI can
+--- receive input, and splash or trust screens silently swallow prompts.
+---@param self ajans.cli.muxer.Herdr
+---@return boolean ready
+local function screen_input_ready(self)
+  local ready = self.tool.mux_ready
+  if not ready or not self.herdr_pane_id then
+    return true
+  end
+  local dump = M.command({
+    "pane",
+    "read",
+    self.herdr_pane_id,
+    "--source",
+    "visible",
+    "--lines",
+    tostring(M.SCREEN_READY_LINES),
+    "--format",
+    "text",
+  }, { notify = false })
+  if not dump then
+    return false
+  end
+  for _, marker in ipairs(ready.blocked or {}) do
+    if dump:find(marker, 1, true) then
+      return false
+    end
+  end
+  for _, marker in ipairs(ready.required or {}) do
+    if not dump:find(marker, 1, true) then
+      return false
+    end
+  end
+  return true
+end
+
 ---@param self ajans.cli.muxer.Herdr
 ---@return boolean
 local function pane_runs_expected_tool(self)
@@ -1207,6 +1246,9 @@ local function pane_runs_expected_tool(self)
     end
   end
   if self._authorized_pid then
+    return false
+  end
+  if matched_pid and not screen_input_ready(self) then
     return false
   end
   self._authorized_pid = matched_pid
