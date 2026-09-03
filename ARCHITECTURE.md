@@ -8,10 +8,10 @@ Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI 
 | --- | --- | --- |
 | Setup/config | `lua/ajans/init.lua`, `lua/ajans/config.lua` | Merge user config, create `:Ajans`, set highlights, validate options, start status hooks. |
 | Commands | `lua/ajans/commands.lua` | Parse `:Ajans cli ...` commands and Lua-style args. |
-| CLI API | `lua/ajans/cli/init.lua` | Public API: `select`, `show`, `toggle`, `focus`, `hide`, `close`, `send`, `prompt`, `render`. |
+| CLI API | `lua/ajans/cli/init.lua` | Public API: `select`, `show`, `toggle`, `focus`, `hide`, `close`, `send`, `prompt`, `render`, and memory-only `retry` for undelivered prompts. |
 | Tool registry | `lua/ajans/cli/tool.lua`, `aj/cli/*.lua` | Load default tool configs from runtime path and merge user overrides. |
 | State | `lua/ajans/cli/state.lua` | Combine installed tools, running sessions, attached sessions, and user filters. |
-| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua`, `lua/ajans/cli/session/herdr.lua`, `lua/ajans/cli/session/herdr/*.lua` | Backend selection and lifecycle contracts; focused Herdr transport, discovery, and layout modules. |
+| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua`, `lua/ajans/cli/session/herdr.lua`, `lua/ajans/cli/session/herdr/*.lua` | Backend selection and lifecycle contracts; focused Herdr transport, discovery, layout, and integration-advisory modules. |
 | Terminal wrapper | `lua/ajans/cli/terminal.lua`, `lua/ajans/cli/scrollback.lua` | Neovim terminal window/buffer lifecycle, keymaps, send queue, mode restore, scrollback. |
 | Context | `lua/ajans/cli/context/*.lua`, `lua/ajans/text.lua`, `lua/ajans/treesitter.lua` | Render prompt variables into strings with optional highlighting metadata. |
 | Pickers | `lua/ajans/cli/picker/*.lua`, `lua/ajans/cli/ui/*.lua` | Tool/prompt/file/buffer selection through `vim.ui.select`, snacks, Telescope, or fzf-lua. |
@@ -67,6 +67,9 @@ Ajans resolves one active backend during session setup. Explicit `tmux` or `herd
 - Herdr control calls use bounded execution and decoded JSON errors. Sensitive pane creation, launch, and prompt payloads use Herdr's owner-only local newline-delimited JSON socket instead of process arguments; Ajans connects through the canonical path it validated. Ajans starts a persistent server with a strict system/runtime environment allowlist so project secrets do not persist, then applies the current process environment only when creating each pane. Registered tools use Herdr's pane-first agent launch; custom commands use escaped shell fallback. This intentionally means other consumers of an Ajans-started shared server do not inherit arbitrary variables. Workspace, tab, pane, and nested-layout changes use validated transactional cleanup.
 - If Neovim is hosted by the selected backend, `window` maps to a tmux window or Herdr tab and `split` maps to a native pane split.
 - Backend `start()` returns `(terminal_command, started)`: `started` is the authoritative creation outcome, while an optional command requests a Neovim terminal wrapper. Discovery returns `(sessions, authoritative)`, so transient scans retain known sessions and authoritative scans remove stale wrappers.
+- Deterministic agent names let Herdr starts reuse an existing owned agent for the same tool and cwd; an `agent_name_taken` race closes only the freshly created empty shell, then adopts the winner after strict name, kind, cwd, and resource-id validation. Foreign conflicts fail closed with a manual inspection command instead of reuse or cleanup.
+- The Herdr integration advisor reads `herdr integration status` for `pi` and `antigravity-cli`, warns once per changed state with the exact install command, and never installs hooks or blocks sessions.
+- Prompt delivery failures (send or submit) are retained in memory only, bound to session identity, tool, and failed phase; `require("ajans.cli").retry(opts)` redelivers explicitly and refuses after detach, identity, tool, or authorization changes. Submit-phase retry sends only Enter so prompt text is never duplicated.
 - Embedded terminal sessions attach to the persistent backend resource and are tracked as `terminal: ...` wrappers. Stable backend identity removes duplicate parent/wrapper entries and reconciles server restarts. Automated input additionally pins the foreground process incarnation; detach or replacement invalidates delayed authorization before delivery.
 
 ## Terminal wrapper
