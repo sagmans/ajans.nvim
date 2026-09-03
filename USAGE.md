@@ -72,6 +72,7 @@ Available CLI commands:
 - `select`
 - `send`
 - `prompt`
+- `retry`
 
 ## Lua API reference
 
@@ -344,11 +345,16 @@ For automatic reloads, enable Neovim `autoread`:
 
 ### Prompt not delivered
 
-Ajans never types into an agent it cannot verify. If a pane is stuck on sign-in, folder trust, or an approval screen, the send is refused and the fully formatted prompt is kept in memory.
+Ajans never types into an agent it cannot verify. For Antigravity, Ajans waits up to 15 seconds for Agy's stable input footer. Boot, sign-in, trust, and unreadable screens make authorization fail. Ajans creates no retry record because it did not attempt delivery.
+
+If a pane send or submit fails after authorization, Ajans keeps the latest formatted prompt in memory. A new delivery failure replaces the previous record.
 
 1. Inspect the agent pane and resolve the blocking screen.
-2. Run `:checkhealth ajans` and confirm the Herdr integration is current.
-3. Redeliver with `:Ajans cli retry name=<tool>`. Retry refuses after the session, tool, or process identity changed, and a retry of a failed submit sends only Enter.
+2. If Ajans reports `Refusing to send`, repeat the original send after the pane is ready.
+3. If Ajans reports `Delivery to the agent failed`, run `:checkhealth ajans`.
+4. Run `:Ajans cli retry name=<tool>` after you resolve the failure.
+
+Retry refuses after the session, tool, or process identity changes. A retry after a failed submit sends only Enter.
 
 ### Herdr integration warnings
 

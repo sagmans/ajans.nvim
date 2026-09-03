@@ -14,7 +14,7 @@ This repository contains `ajans.nvim`, a Neovim plugin that provides an integrat
 
 - `./scripts/test` – runs the `mini.test` suite using the Lazy.nvim harness; automatically installs test dependencies. Set `LAZY_OFFLINE=1` when you need to skip the bootstrap download (for fully offline CI).
 - `./scripts/docs` – regenerates marked docs blocks from `lua/ajans/config.lua`, `lua/ajans/cli/init.lua`, and `tests/fixtures/readme.lua`.
-- `stylua lua tests` – format Lua source and tests when needed.
+- `stylua lua tests aj` – format Lua source, tests, and bundled tool configs when needed.
 - `selene` – lint Lua files (if selene is installed in the environment).
 - Inspect Neovim help topics from the CLI:
 
@@ -50,6 +50,7 @@ This repository contains `ajans.nvim`, a Neovim plugin that provides an integrat
 - CLI orchestration: `lua/ajans/cli/init.lua`
 - CLI actions: `lua/ajans/cli/actions.lua`
 - CLI sessions: `lua/ajans/cli/session/init.lua`
+- Herdr integration advice: `lua/ajans/cli/session/herdr/integrations.lua`
 - Status integration: `lua/ajans/status.lua`
 - Tests entry point: `tests/minit.lua`
 

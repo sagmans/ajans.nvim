@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Features
+
+* **cli:** focus newly created multiplexer windows, tabs, and splits by default. Set `cli.mux.focus = false` to keep Neovim focused
+* **herdr:** report missing or stale Pi and Antigravity lifecycle integrations without installing or modifying them
+
+### Bug Fixes
+
+* **cli:** retain the latest failed pane send or submit for explicit, session-bound retry
+* **herdr:** reuse exact-match owned agents and recover deterministic-name races without adopting or closing foreign agents
+* **herdr:** wait for Agy's stable input screen before automated delivery and leave folder trust to the user
+
 ## [0.2.0](https://github.com/sagmans/ajans.nvim/compare/v0.1.0...v0.2.0) (2026-05-25)
 
 ### ⚠ BREAKING CHANGES
