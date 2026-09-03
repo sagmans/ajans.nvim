@@ -1497,6 +1497,46 @@ describe("herdr backend", function()
     assert.is_nil(find_call(calls, { "herdr", "pane", "close" }))
   end)
 
+  it("advises once when the Herdr integration for the started tool is missing", function()
+    local Integrations = require("ajans.cli.session.herdr.integrations")
+    Integrations.reset()
+    local original_warn = Util.warn
+    local warnings = {}
+    Util.warn = function(message)
+      warnings[#warnings + 1] = message
+    end
+    local session = new_session({ tool = test_tool({ name = "pi", cmd = { "pi" } }) })
+    Herdr.ensure_server = function()
+      return true
+    end
+    Util.error = function() end
+    Herdr._run = function(cmd)
+      if cmd[2] == "integration" and cmd[3] == "status" then
+        return completed("pi: not installed (/hooks)\n", 0)
+      elseif cmd[2] == "agent" and cmd[3] == "list" then
+        return success({ agents = {} })
+      elseif cmd[2] == "workspace" and cmd[3] == "create" then
+        return success({
+          type = "workspace_created",
+          workspace = { workspace_id = "w1" },
+          tab = { tab_id = "t1" },
+          root_pane = { pane_id = "root", terminal_id = "term-root", workspace_id = "w1", tab_id = "t1" },
+        })
+      elseif cmd[2] == "agent" then
+        return failure("agent_start_failed", "spawn failed")
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+
+    session:start()
+    session:start()
+
+    assert.are.equal(1, #warnings)
+    assert.matches("herdr integration install pi", warnings[1])
+    Util.warn = original_warn
+    Integrations.reset()
+  end)
+
   it("creates a Herdr tab and starts the agent in its root pane", function()
     setup_config({ cli = { mux = { backend = "herdr", create = "window" } } })
     vim.env.HERDR_ENV = "1"

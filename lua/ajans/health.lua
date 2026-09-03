@@ -51,6 +51,30 @@ function M.check()
         else
           error("The selected Herdr server API socket is unusable: " .. (socket_err or "unknown error"))
         end
+        local Integrations = require("ajans.cli.session.herdr.integrations")
+        local tools = require("ajans.config").tools()
+        local tool_names = vim.tbl_keys(tools) ---@type string[]
+        table.sort(tool_names)
+        -- Report only tools that are configured, Herdr-registered, and actually
+        -- installed; missing binaries have their own report further below.
+        for _, name in ipairs(tool_names) do
+          local tool = tools[name]
+          if
+            Integrations.integration_for(name)
+            and type(tool.cmd) == "table"
+            and #tool.cmd > 0
+            and vim.fn.executable(tool.cmd[1]) == 1
+          then
+            local assessment = Integrations.assess(name, Herdr._run)
+            if not assessment or assessment.state == Integrations.STATE_CURRENT then
+              ok(("`%s` Herdr integration is current"):format(name))
+            elseif assessment.query_error then
+              warn(("Unable to query the `%s` Herdr integration: %s"):format(name, assessment.query_error))
+            else
+              warn(Integrations.message(assessment))
+            end
+          end
+        end
       else
         ok("The selected Herdr server is stopped and will start when Ajans creates a session")
       end

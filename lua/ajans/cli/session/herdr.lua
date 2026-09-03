@@ -1,6 +1,7 @@
 local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
 local Discovery = require("ajans.cli.session.herdr.discovery")
+local Integrations = require("ajans.cli.session.herdr.integrations")
 local Layout = require("ajans.cli.session.herdr.layout")
 local Procs = require("ajans.cli.procs")
 local Util = require("ajans.util")
@@ -1065,6 +1066,8 @@ function M:start()
   if not M.ensure_server() then
     return nil, false
   end
+  -- Advisory only: integration gaps must never block or delay a session.
+  Integrations.advise(self.tool.name, M._run)
   if not self.external then
     return self:start_workspace()
   elseif Config.cli.mux.create == "window" then
