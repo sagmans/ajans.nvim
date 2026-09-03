@@ -34,6 +34,9 @@ FEATURES                                *ajans.nvim-ajans.nvim-features*
 - Prompt library for common tasks such as explaining code, fixing issues,
   reviews, tests, and documentation.
 - Session persistence with tmux or Herdr.
+- Exact-match Herdr agent reuse with strict conflict checks.
+- Screen-aware Agy input and explicit retry after pane delivery failures.
+- Herdr lifecycle integration guidance for Pi and Antigravity.
 - File watching that runs `:checktime` after external changes.
 - Picker actions and statusline helpers for plugin integration.
 
@@ -94,6 +97,7 @@ Configure with:
         mux = {
           backend = "auto", -- or "tmux" / "herdr"
           create = "split",
+          focus = true,
         },
         tools = {
           antigravity = {},
@@ -107,17 +111,41 @@ Configure with:
 
 AI CLI INTEGRATION            *ajans.nvim-ajans.nvim-ai-cli-integration*
 
-Ajans runs local AI CLI tools through tmux or Herdr so sessions persist across
-Neovim windows and restarts. Backend `auto` prefers the multiplexer hosting
-Neovim, then a running Herdr server, the sole usable backend, and tmux as
-the compatibility tie-breaker. A sole installed Herdr is selected even when
-invalid so health can explain why. When needed, Ajans opens a lightweight Neovim
-terminal wrapper attached to the persistent session. A compatible Herdr server
-remains usable when restart is recommended. Ajans-started Herdr servers receive
-a strict system/runtime environment allowlist; current project variables are
-applied only when creating each pane. Registered tools use Herdr's agent launch;
-custom commands use escaped shell fallback. Helper prompts can include locations,
-selections, diagnostics, quickfix entries, buffers, functions, and classes.
+Ajans runs local AI CLI tools through tmux or Herdr. Sessions persist across
+Neovim windows and restarts. Backend `auto` prefers the multiplexer that hosts
+Neovim. It then prefers a running Herdr server, the sole usable backend, and
+tmux as the compatibility fallback. Ajans selects a sole installed Herdr even
+when it is invalid so health can report the cause.
+
+Ajans opens a lightweight Neovim terminal wrapper when one is necessary. A
+compatible Herdr server remains usable when a restart is recommended. Ajans
+starts Herdr servers with a strict system/runtime environment allowlist. It
+applies current project variables only when it creates each pane. Registered
+tools use Herdr agent launch. Custom commands use escaped shell fallback.
+
+Deterministic names let Ajans reuse an owned Herdr agent for the same tool and
+working directory. Ajans validates the name, tool kind, working directory, and
+resource IDs before reuse. If `agent_name_taken` occurs, Ajans can adopt the
+validated winner. It closes only the empty resource that it created. A foreign
+conflict stops creation and requires manual inspection.
+
+Ajans reads Herdr integration status for `pi` and `antigravity-cli`. It warns
+when an integration is missing or stale. The warning includes the install
+command. Ajans never installs or modifies integrations.
+
+Before automated input, Ajans verifies the current process. For Antigravity,
+Ajans also reads the visible pane. It waits up to 15 seconds for Agy's stable
+input footer. Boot, sign-in, folder-trust, and unreadable screens block input.
+Ajans never approves folder trust. An authorization failure creates no retry
+record because Ajans did not attempt delivery.
+
+If pane send or submit fails after authorization, Ajans keeps one formatted
+prompt in memory. Use `:Ajans cli retry name=<tool>` after the pane is ready.
+The retry requires the same tool, session, and process ownership. A failed
+submit retry sends only Enter.
+
+Helper prompts can include locations, selections, diagnostics, quickfix
+entries, buffers, functions, and classes.
 
 API summary:
 
@@ -131,6 +159,8 @@ API summary:
     require("ajans.cli").send(opts)
     require("ajans.cli").prompt(opts)
     require("ajans.cli").render(opts)
+    require("ajans.cli").retry(opts)
+    require("ajans.cli").clear_retry()
 <
 
 COMMANDS                                *ajans.nvim-ajans.nvim-commands*
@@ -153,6 +183,7 @@ CLI commands:
 - `:Ajans cli select`
 - `:Ajans cli send`
 - `:Ajans cli prompt`
+- `:Ajans cli retry name=<tool>`
 
 Example:
 
@@ -204,6 +235,16 @@ Run `:checkhealth ajans` and install the selected backend. Use tmux or Herdr
 >= 0.8.0 on macOS/Linux. Herdr health also validates its owner-only local API
 socket. Set `cli.mux.backend` explicitly if auto-selection chose the wrong
 installed backend.
+
+Prompt not delivered? ~
+
+If Ajans reports `Refusing to send`, resolve the blocking pane and repeat the
+original send. This refusal creates no retry record because delivery did not
+start.
+
+If Ajans reports `Delivery to the agent failed`, resolve the pane and run
+`:checkhealth ajans`. Then run `:Ajans cli retry name=<tool>`. Ajans stores only
+the latest failed delivery, and the record does not survive a Neovim restart.
 
 Do I need a GitHub Copilot subscription? ~
 

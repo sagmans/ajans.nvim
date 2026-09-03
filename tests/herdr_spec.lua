@@ -1250,6 +1250,293 @@ describe("herdr backend", function()
     assert.matches("herdr workspace close leaked%-workspace", errors[#errors])
   end)
 
+  local function existing_agent(session, overrides)
+    local agent = {
+      name = session:agent_name(),
+      agent = "claude",
+      terminal_id = "term-existing",
+      pane_id = "p-existing",
+      workspace_id = "w-existing",
+      tab_id = "t-existing",
+      cwd = "/tmp/project",
+      agent_status = "idle",
+    }
+    return vim.tbl_extend("force", agent, overrides or {})
+  end
+
+  it("reuses an existing named agent instead of creating a second workspace", function()
+    local calls = {}
+    local session = new_session()
+    Herdr.ensure_server = function()
+      return true
+    end
+    Herdr._run = function(cmd)
+      calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
+      if cmd[2] == "agent" and cmd[3] == "list" then
+        return success({ agents = { existing_agent(session) } })
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+
+    local attach = session:start()
+
+    assert.are.same({ "herdr", "agent", "attach", "term-existing" }, attach.cmd)
+    assert.is_true(session.started)
+    assert.is_false(session.external)
+    assert.are.equal("herdr term-existing", session.id)
+    assert.are.equal("herdr:term-existing", session.identity)
+    assert.are.equal("p-existing", session.herdr_pane_id)
+    assert.are.equal("w-existing", session.herdr_workspace_id)
+    assert.are.equal(session:agent_name(), session.herdr_name)
+    assert.is_nil(find_call(calls, { "herdr", "workspace", "create" }))
+    assert.is_nil(find_call(calls, { "herdr", "agent", "start" }))
+    assert.is_nil(find_call(calls, { "herdr", "workspace", "close" }))
+  end)
+
+  it("recovers an agent_name_taken race by adopting the winner and closing only the empty workspace", function()
+    local calls = {}
+    local session = new_session()
+    local list_results = {
+      success({ agents = {} }),
+      success({ agents = { existing_agent(session) } }),
+    }
+    Herdr.ensure_server = function()
+      return true
+    end
+    Herdr._run = function(cmd)
+      calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
+      if cmd[2] == "agent" and cmd[3] == "list" then
+        return table.remove(list_results, 1)
+      elseif cmd[2] == "workspace" and cmd[3] == "create" then
+        return success({
+          type = "workspace_created",
+          workspace = { workspace_id = "w1" },
+          tab = { tab_id = "t1" },
+          root_pane = { pane_id = "root", terminal_id = "term-root", workspace_id = "w1", tab_id = "t1" },
+        })
+      elseif cmd[2] == "agent" and cmd[3] == "start" then
+        return failure("agent_name_taken", "agent name is already used")
+      elseif cmd[2] == "workspace" and cmd[3] == "close" then
+        return completed()
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+
+    local attach = session:start()
+
+    assert.are.same({ "herdr", "agent", "attach", "term-existing" }, attach.cmd)
+    assert.is_true(session.started)
+    assert.are.equal("p-existing", session.herdr_pane_id)
+    assert.are.equal("term-existing", session.herdr_terminal_id)
+    local closes = vim.tbl_filter(function(call)
+      return call.cmd[2] == "workspace" and call.cmd[3] == "close"
+    end, calls)
+    assert.are.equal(1, #closes)
+    assert.are.equal("w1", closes[1].cmd[4])
+    assert.is_nil(find_call(calls, { "herdr", "pane", "close" }))
+  end)
+
+  for _, case in ipairs({
+    { label = "a different agent kind", overrides = { agent = "agy" } },
+    { label = "a different working directory", overrides = { cwd = "/other/project" } },
+    { label = "unstable resource ids", overrides = { tab_id = vim.NIL } },
+  }) do
+    it("refuses to reuse a conflicting agent with " .. case.label, function()
+      local calls = {}
+      local errors = {}
+      local session = new_session()
+      Herdr.ensure_server = function()
+        return true
+      end
+      Util.error = function(message)
+        errors[#errors + 1] = message
+      end
+      Herdr._run = function(cmd)
+        calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
+        if cmd[2] == "agent" and cmd[3] == "list" then
+          return success({ agents = { existing_agent(session, case.overrides) } })
+        elseif cmd[2] == "workspace" and cmd[3] == "create" then
+          return success({
+            type = "workspace_created",
+            workspace = { workspace_id = "w1" },
+            tab = { tab_id = "t1" },
+            root_pane = { pane_id = "root", terminal_id = "term-root", workspace_id = "w1", tab_id = "t1" },
+          })
+        elseif cmd[2] == "agent" and cmd[3] == "start" then
+          return failure("agent_name_taken", "agent name is already used")
+        elseif cmd[2] == "workspace" and cmd[3] == "close" then
+          return completed()
+        end
+        error("unexpected command: " .. table.concat(cmd, " "))
+      end
+
+      assert.is_nil(session:start())
+
+      assert.is_false(session.started == true)
+      assert.is_not_nil(find_call(calls, { "herdr", "workspace", "close", "w1" }))
+      assert.is_nil(find_call(calls, { "herdr", "pane", "close" }))
+      assert.matches("herdr agent get " .. vim.pesc(session:agent_name()), errors[#errors])
+    end)
+  end
+
+  it("reuses an existing agent from an external tab session without creating resources", function()
+    setup_config({ cli = { mux = { backend = "herdr", create = "window" } } })
+    vim.env.HERDR_ENV = "1"
+    vim.env.HERDR_WORKSPACE_ID = "host-workspace"
+    vim.env.HERDR_TAB_ID = "host-tab"
+    local calls = {}
+    local messages = {}
+    local session = new_session()
+    Herdr.ensure_server = function()
+      return true
+    end
+    Util.info = function(message)
+      messages[#messages + 1] = message
+    end
+    Herdr._run = function(cmd)
+      calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
+      if cmd[2] == "agent" and cmd[3] == "list" then
+        return success({ agents = { existing_agent(session) } })
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+
+    local attach = session:start()
+
+    assert.is_nil(attach)
+    assert.is_true(session.started)
+    assert.is_true(session.external)
+    assert.are.equal("p-existing", session.herdr_pane_id)
+    assert.is_nil(find_call(calls, { "herdr", "tab", "create" }))
+    assert.is_nil(find_call(calls, { "herdr", "agent", "start" }))
+    assert.is_nil(find_call(calls, { "herdr", "tab", "close" }))
+    assert.matches("Reusing", messages[1])
+  end)
+
+  it("recovers an agent_name_taken race in an external tab by closing only the empty tab", function()
+    setup_config({ cli = { mux = { backend = "herdr", create = "window" } } })
+    vim.env.HERDR_ENV = "1"
+    vim.env.HERDR_WORKSPACE_ID = "host-workspace"
+    vim.env.HERDR_TAB_ID = "host-tab"
+    local calls = {}
+    local messages = {}
+    local session = new_session()
+    local list_results = {
+      success({ agents = {} }),
+      success({ agents = { existing_agent(session) } }),
+    }
+    Herdr.ensure_server = function()
+      return true
+    end
+    Util.info = function(message)
+      messages[#messages + 1] = message
+    end
+    Herdr._run = function(cmd)
+      calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
+      if cmd[2] == "agent" and cmd[3] == "list" then
+        return table.remove(list_results, 1)
+      elseif cmd[2] == "tab" and cmd[3] == "create" then
+        return success({
+          type = "tab_created",
+          tab = { tab_id = "new-tab", workspace_id = "host-workspace" },
+          root_pane = {
+            pane_id = "tab-root",
+            terminal_id = "term-window",
+            workspace_id = "host-workspace",
+            tab_id = "new-tab",
+          },
+        })
+      elseif cmd[2] == "agent" and cmd[3] == "start" then
+        return failure("agent_name_taken", "agent name is already used")
+      elseif cmd[2] == "tab" and cmd[3] == "close" then
+        return completed()
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+
+    local attach = session:start()
+
+    assert.is_nil(attach)
+    assert.is_true(session.started)
+    assert.are.equal("p-existing", session.herdr_pane_id)
+    local closes = vim.tbl_filter(function(call)
+      return call.cmd[2] == "tab" and call.cmd[3] == "close"
+    end, calls)
+    assert.are.equal(1, #closes)
+    assert.are.equal("new-tab", closes[1].cmd[4])
+    assert.matches("Reusing", messages[1])
+  end)
+
+  it("reuses an existing agent from an external split session without splitting", function()
+    setup_config({ cli = { mux = { backend = "herdr", create = "split", split = { vertical = true, size = 0.5 } } } })
+    vim.env.HERDR_ENV = "1"
+    vim.env.HERDR_WORKSPACE_ID = "host-workspace"
+    vim.env.HERDR_TAB_ID = "host-tab"
+    vim.env.HERDR_PANE_ID = "host-pane"
+    local calls = {}
+    local session = new_session()
+    Herdr.ensure_server = function()
+      return true
+    end
+    Util.info = function() end
+    Herdr._run = function(cmd)
+      calls[#calls + 1] = { cmd = vim.deepcopy(cmd) }
+      if cmd[2] == "agent" and cmd[3] == "list" then
+        return success({ agents = { existing_agent(session) } })
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+
+    local attach = session:start()
+
+    assert.is_nil(attach)
+    assert.is_true(session.started)
+    assert.are.equal("p-existing", session.herdr_pane_id)
+    assert.is_nil(find_call(calls, { "herdr", "pane", "split" }))
+    assert.is_nil(find_call(calls, { "herdr", "agent", "start" }))
+    assert.is_nil(find_call(calls, { "herdr", "pane", "close" }))
+  end)
+
+  it("advises once when the Herdr integration for the started tool is missing", function()
+    local Integrations = require("ajans.cli.session.herdr.integrations")
+    Integrations.reset()
+    local original_warn = Util.warn
+    local warnings = {}
+    Util.warn = function(message)
+      warnings[#warnings + 1] = message
+    end
+    local session = new_session({ tool = test_tool({ name = "pi", cmd = { "pi" } }) })
+    Herdr.ensure_server = function()
+      return true
+    end
+    Util.error = function() end
+    Herdr._run = function(cmd)
+      if cmd[2] == "integration" and cmd[3] == "status" then
+        return completed("pi: not installed (/hooks)\n", 0)
+      elseif cmd[2] == "agent" and cmd[3] == "list" then
+        return success({ agents = {} })
+      elseif cmd[2] == "workspace" and cmd[3] == "create" then
+        return success({
+          type = "workspace_created",
+          workspace = { workspace_id = "w1" },
+          tab = { tab_id = "t1" },
+          root_pane = { pane_id = "root", terminal_id = "term-root", workspace_id = "w1", tab_id = "t1" },
+        })
+      elseif cmd[2] == "agent" then
+        return failure("agent_start_failed", "spawn failed")
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+
+    session:start()
+    session:start()
+
+    assert.are.equal(1, #warnings)
+    assert.matches("herdr integration install pi", warnings[1])
+    Util.warn = original_warn
+    Integrations.reset()
+  end)
+
   it("creates a Herdr tab and starts the agent in its root pane", function()
     setup_config({ cli = { mux = { backend = "herdr", create = "window" } } })
     vim.env.HERDR_ENV = "1"
@@ -2168,6 +2455,131 @@ describe("herdr backend", function()
     deferred()
     assert.is_true(accepted)
     assert.are.equal(200, session._authorized_pid)
+  end)
+
+  local function ready_gated_session(dump)
+    local tool = test_tool({ name = "antigravity", cmd = { "agy" } })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "agy"
+    end
+    tool.mux_ready = {
+      required = { "? for shortcuts" },
+      blocked = { "Do you trust the contents of this project" },
+    }
+    local session = new_session({
+      tool = tool,
+      started = true,
+      herdr_agent = false,
+      herdr_pane_id = "pane-1",
+    })
+    Herdr._run = function(cmd)
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = 200, cmdline = "agy" } } } })
+      elseif cmd[2] == "pane" and cmd[3] == "read" then
+        if dump == nil then
+          return completed("", 1, "pane vanished")
+        end
+        return completed(dump)
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+    return session
+  end
+
+  for _, case in ipairs({
+    {
+      label = "while the tool shows a boot splash",
+      dump = "Welcome to the Antigravity CLI.\n Signing in...",
+      expected = false,
+    },
+    {
+      label = "while the tool shows the folder trust dialog",
+      dump = "Do you trust the contents of this project?\n> Yes, I trust this folder",
+      expected = false,
+    },
+    {
+      label = "when a blocked screen also contains the ready footer",
+      dump = "Do you trust the contents of this project?\n? for shortcuts",
+      expected = false,
+    },
+    {
+      label = "once the tool shows its input footer",
+      dump = "Antigravity CLI 1.1.25\n> Accept-edits mode\n? for shortcuts",
+      expected = true,
+    },
+    { label = "when the pane screen cannot be read", dump = nil, expected = false },
+  }) do
+    it("holds automated input " .. case.label, function()
+      local session = ready_gated_session(case.dump)
+
+      assert.are.equal(case.expected, session:accepts_automated_input())
+    end)
+  end
+
+  it("waits for a settling screen instead of typing into it", function()
+    local tool = test_tool({ name = "antigravity", cmd = { "agy" } })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "agy"
+    end
+    tool.mux_ready = { required = { "? for shortcuts" } }
+    local session = new_session({
+      tool = tool,
+      started = true,
+      herdr_agent = false,
+      herdr_pane_id = "pane-1",
+    })
+    session.fresh = true
+    local phase = "booting"
+    Herdr._run = function(cmd)
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = 200, cmdline = "agy" } } } })
+      elseif cmd[2] == "pane" and cmd[3] == "read" then
+        if phase == "booting" then
+          return completed("Welcome to the Antigravity CLI.\n Signing in...")
+        end
+        return completed("Antigravity CLI 1.1.25\n? for shortcuts")
+      end
+      error("unexpected command: " .. table.concat(cmd, " "))
+    end
+    local deferred
+    local accepted
+    vim.uv.now = function()
+      return 0
+    end
+    vim.defer_fn = function(callback)
+      deferred = callback
+      return 1
+    end
+
+    session:authorize_automated_input(function(value)
+      accepted = value
+    end)
+    assert.is_nil(accepted)
+
+    phase = "ready"
+    deferred()
+    assert.is_true(accepted)
+  end)
+
+  it("skips the screen gate for tools without readiness markers", function()
+    local tool = test_tool({ name = "pi", cmd = { "pi" } })
+    tool.is_proc = function(_, proc)
+      return proc.cmd == "pi"
+    end
+    local session = new_session({
+      tool = tool,
+      started = true,
+      herdr_agent = false,
+      herdr_pane_id = "pane-1",
+    })
+    Herdr._run = function(cmd)
+      if cmd[2] == "pane" and cmd[3] == "process-info" then
+        return success({ process_info = { foreground_processes = { { pid = 200, cmdline = "pi" } } } })
+      end
+      error("screen reads must not happen without markers: " .. table.concat(cmd, " "))
+    end
+
+    assert.is_true(session:accepts_automated_input())
   end)
 
   it("times out fresh authorization exactly once", function()

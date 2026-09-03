@@ -11,6 +11,9 @@ Ajans supports tmux and [Herdr](https://herdr.dev) as full session backends. AI 
 - Runs supported AI CLI tools through tmux or Herdr sessions and panes.
 - Opens a Neovim terminal wrapper for embedded sessions, or uses native backend windows/tabs and splits when configured.
 - Reuses persistent sessions across window changes and Neovim restarts.
+- Reuses an exact-match Herdr agent for the same tool and working directory. Foreign name conflicts fail closed.
+- Holds Herdr-delivered Agy input until its prompt screen is ready and supports explicit retry after pane delivery failures.
+- Reports missing or stale Herdr lifecycle integrations for Pi and Agy without modifying them.
 - Discovers supported and custom configured tools already running in multiplexer panes.
 - Sends verified editor context: file locations, cursor/range positions, selections, diagnostics, quickfix entries, buffers, functions, and classes.
 - Provides prompt, tool, file, and buffer pickers.

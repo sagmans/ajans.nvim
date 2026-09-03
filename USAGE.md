@@ -10,6 +10,8 @@ Ajans does not create global keymaps by itself. The examples below assume the su
 
 Herdr `>= 0.8.0` is supported on macOS and Linux. When Neovim runs inside Herdr, Ajans maps `create = "window"` to a Herdr tab and `create = "split"` to a Herdr pane split. Native tabs use `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID`; splits also use `HERDR_PANE_ID`. Herdr exports these values to hosted panes. Named sessions selected with `HERDR_SESSION` or `HERDR_SOCKET_PATH` are inherited automatically. A running server with a compatible protocol remains usable when Herdr recommends a client-version restart; `:checkhealth ajans` reports that recommendation without blocking sessions.
 
+Herdr agents get deterministic `ajans-<tool>-<cwd-hash>` names. Starting a tool again for the same working directory reuses the existing agent instead of creating a duplicate; if another process claims the name first, Ajans closes only the empty pane it created, re-validates the winner, and attaches to it. A conflicting agent that does not match Ajans's tool, kind, and working directory is never reused or closed; Ajans reports the exact `herdr agent get` command so you can inspect it manually.
+
 When Ajans starts Herdr, it gives the long-lived shared server a strict allowlist of system/runtime variables rather than persisting the full Neovim project environment. Ajans applies the current launch environment only when creating each pane through the trusted local socket. Built-in tools recognized by Herdr use its registered-agent launch; custom commands and unsupported tools use an escaped shell launch in the created pane. Other Herdr consumers that require variables such as `SSH_AUTH_SOCK`, proxy settings, editor settings, or custom plugin variables should start the shared Herdr server themselves with their chosen environment before Ajans creates a session.
 
 ## Keymap-first workflow
@@ -70,6 +72,7 @@ Available CLI commands:
 - `select`
 - `send`
 - `prompt`
+- `retry`
 
 ## Lua API reference
 
@@ -78,6 +81,14 @@ Generated from `lua/ajans/cli/init.lua` by `./scripts/docs`.
 <!-- api_cli:start -->
 
 <table><tr><th>Cmd</th><th>Lua</th></tr>
+<tr><td> Forget any retained prompt without redelivering it</td><td>
+
+
+```lua
+require("ajans.cli").clear_retry()
+```
+
+</td></tr>
 <tr><td><code>:Ajans cli close</code> </td><td>
 
 
@@ -124,6 +135,17 @@ require("ajans.cli").prompt(opts)
 ```lua
 ---@param opts? ajans.cli.Message|string
 require("ajans.cli").render(opts)
+```
+
+</td></tr>
+<tr><td><code>:Ajans cli retry</code> Redeliver the most recently failed prompt. Never automatic: the user must
+invoke it after resolving the agent pane. Refuses after the bound session
+identity, tool, or process ownership changed.</td><td>
+
+
+```lua
+---@param opts? {name?:string, filter?:ajans.cli.Filter}
+require("ajans.cli").retry(opts)
 ```
 
 </td></tr>
@@ -320,6 +342,25 @@ For automatic reloads, enable Neovim `autoread`:
 2. For tmux, verify `tmux` is installed.
 3. For Herdr, verify `herdr --version` reports `0.8.0` or newer and confirm health reports a trusted owner-only local API socket. A compatible version mismatch is advisory; protocol incompatibility blocks use. Before restarting, save active pane work: a restart stops the original shells, agents, tests, and other pane processes. Prefer Herdr's supported live handoff when available; see [Herdr session state and recovery](https://herdr.dev/docs/session-state/).
 4. Set `cli.mux.backend` explicitly if auto-selection chose a different installed backend.
+
+### Prompt not delivered
+
+Ajans never types into an agent it cannot verify. For Antigravity, Ajans waits up to 15 seconds for Agy's stable input footer. Boot, sign-in, trust, and unreadable screens make authorization fail. Ajans creates no retry record because it did not attempt delivery.
+
+If a pane send or submit fails after authorization, Ajans keeps the latest formatted prompt in memory. A new delivery failure replaces the previous record.
+
+1. Inspect the agent pane and resolve the blocking screen.
+2. If Ajans reports `Refusing to send`, repeat the original send after the pane is ready.
+3. If Ajans reports `Delivery to the agent failed`, run `:checkhealth ajans`.
+4. Run `:Ajans cli retry name=<tool>` after you resolve the failure.
+
+Retry refuses after the session, tool, or process identity changes. A retry after a failed submit sends only Enter.
+
+### Herdr integration warnings
+
+For `antigravity`, Ajans also holds automated input until Agy's own screen settles: sign-in restoration and folder-trust screens swallow typed text, so prompts wait for the stable input footer instead. If Agy shows a trust screen, approve it manually once; Ajans never approves trust prompts.
+
+For `pi` and `antigravity`, Ajans reads `herdr integration status` and warns once when the integration is missing or stale, including the exact `herdr integration install` command. Integrations improve agent lifecycle reporting only; they never sign in, trust folders, or authorize terminal input. Ajans never installs or modifies them itself.
 
 ### Picker action fails
 

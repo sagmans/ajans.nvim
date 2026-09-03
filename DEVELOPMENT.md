@@ -11,6 +11,7 @@ Contributor notes for ajans.nvim.
 | `lua/ajans/cli/init.lua` | Public CLI Lua API. |
 | `lua/ajans/cli/actions.lua` | Built-in CLI terminal action handlers used by keymaps. |
 | `lua/ajans/cli/session/` | Backend selection and tmux/Herdr session adapters. |
+| `lua/ajans/cli/session/herdr/integrations.lua` | Advisory status checks for supported Herdr lifecycle integrations. |
 | `lua/ajans/cli/terminal.lua` | Neovim terminal wrapper. |
 | `lua/ajans/cli/context/` | Prompt context providers. |
 | `lua/ajans/cli/picker/` | snacks, Telescope, fzf-lua picker adapters. |
@@ -25,7 +26,7 @@ Contributor notes for ajans.nvim.
 ```bash
 ./scripts/test
 ./scripts/docs
-stylua lua tests
+stylua lua tests aj
 selene
 ```
 
@@ -57,14 +58,16 @@ Do not edit generated blocks directly. Update source, then run `./scripts/docs`.
 
 ## Session backend contract
 
-Both backend adapters implement `start`, `attach`, `detach`, `sessions`, `send`, `submit`, `dump`, and `is_running`. Add behavior to the table-driven contract in `tests/mux_parity_spec.lua` when this interface changes. Herdr command tests must mock `_run`/`_run_many`; the ordinary test harness must not inspect or mutate a developer's live Herdr server. Real lifecycle harnesses are intentionally deferred to [Herdr issue #11](https://github.com/sagmans/ajans.nvim/issues/11) and [tmux issue #10](https://github.com/sagmans/ajans.nvim/issues/10); those harnesses must use isolated temporary namespaces and recorded-ID cleanup only.
+Both backend adapters implement `start`, `attach`, `detach`, `sessions`, `send`, `submit`, `dump`, and `is_running`. Automated delivery also uses `accepts_automated_input` and `authorize_automated_input`. Add behavior to the table-driven contract in `tests/mux_parity_spec.lua` when this interface changes.
+
+Herdr command tests must mock `_run` and `_run_many`. The ordinary test harness must not inspect or mutate a developer's live Herdr server. Real lifecycle harnesses remain deferred to [Herdr issue #11](https://github.com/sagmans/ajans.nvim/issues/11) and [tmux issue #10](https://github.com/sagmans/ajans.nvim/issues/10). These harnesses must use isolated temporary namespaces and recorded-ID cleanup only.
 
 ## Adding a CLI tool
 
 1. Add `aj/cli/{name}.lua`.
 2. Add the tool key under `cli.tools` in `lua/ajans/config.lua`.
 3. Include at least `cmd`, `is_proc`, and `url` when possible.
-4. Add formatter/keymap/focus/scroll options only when the tool needs them.
+4. Add formatter, keymap, focus, scroll, or `mux_ready` options only when the tool needs them.
 5. Update tests if tool loading or formatting behavior changes.
 6. Run `./scripts/docs` and `./scripts/test`.
 
@@ -109,7 +112,7 @@ Before shipping docs or behavior changes:
 ```bash
 ./scripts/docs
 ./scripts/test
-stylua lua tests
+stylua lua tests aj
 ```
 
 Also check:

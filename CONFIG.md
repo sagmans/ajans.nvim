@@ -227,6 +227,7 @@ Supported tool fields include:
 - `format`: formatter run before text is sent
 - `native_scroll`: skip Ajans multiplexer scrollback when the tool handles scrolling itself
 - `mux_focus`: send a terminal focus event before text input
+- `mux_ready`: Herdr visible-screen markers (`required` and `blocked` string lists) that gate automated input. Blocked markers take precedence.
 
 ### `cli.prompts`
 

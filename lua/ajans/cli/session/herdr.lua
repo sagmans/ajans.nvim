@@ -1,6 +1,7 @@
 local Client = require("ajans.cli.session.herdr.client")
 local Config = require("ajans.config")
 local Discovery = require("ajans.cli.session.herdr.discovery")
+local Integrations = require("ajans.cli.session.herdr.integrations")
 local Layout = require("ajans.cli.session.herdr.layout")
 local Procs = require("ajans.cli.procs")
 local Util = require("ajans.util")
@@ -35,7 +36,10 @@ M.STARTUP_INTERVAL = 100
 M.COMMAND_TIMEOUT = 5000
 M.LIVENESS_TIMEOUT = 250
 M.LIVENESS_ERROR_INTERVAL = 30000
-M.INPUT_READY_TIMEOUT = 5000
+-- Slow TUI boots (sign-in restoration, folder trust) need more than a quick
+-- poll before refusal; the wait only delays a refusal, never a delivery.
+M.INPUT_READY_TIMEOUT = 15000
+M.SCREEN_READY_LINES = 40
 M.INPUT_READY_INTERVAL = 100
 M.PANE_READY_TIMEOUT = 5000
 M.PANE_READY_INTERVAL = 100
@@ -56,6 +60,9 @@ local AGENT_NAME_TOOL_BYTES = AGENT_NAME_MAX_BYTES
   - #AGENT_NAME_PREFIX
   - AGENT_NAME_SEPARATOR_BYTES
   - AGENT_NAME_HASH_BYTES
+-- Reuse must stay visible: silently attaching to an existing agent would
+-- confuse users who expect a fresh start, so external paths announce it.
+local AGENT_REUSE_MESSAGE = "Reusing the existing Herdr agent for **%s**"
 local SHELL_EXEC_PREFIX = "exec "
 local SHELL_QUOTE_ESCAPE = "'\"'\"'"
 local HERDR_MANAGED_ENV_KEYS = {
@@ -626,9 +633,64 @@ local function pane_not_ready(err)
     and (err:find("agent_pane_busy", 1, true) ~= nil or err:find("not an available shell", 1, true) ~= nil)
 end
 
+-- Only the stable error code identifies a cross-process name collision; the
+-- human-readable suffix embeds candidate paths that must never be trusted.
+---@param err string?
+---@return boolean
+local function agent_name_taken(err)
+  return type(err) == "string" and err:find("agent_name_taken", 1, true) ~= nil
+end
+
+-- Adoption requires an exact identity match: the deterministic name ties the
+-- agent to this tool, the registered kind ties the tool to its executable,
+-- and the cwd tie prevents adopting an agent meant for another directory.
+---@param self ajans.cli.muxer.Herdr
+---@param agents table[]?
+---@return table? agent
+local function exact_owned_agent(self, agents)
+  local kind = registered_kind(self)
+  if not kind or type(agents) ~= "table" then
+    return
+  end
+  local name = self:agent_name()
+  local cwd = vim.fs.normalize(self.cwd)
+  for _, agent in ipairs(agents) do
+    local agent_cwd = type(agent.foreground_cwd) == "string" and agent.foreground_cwd or agent.cwd
+    if
+      type(agent) == "table"
+      and agent.name == name
+      and agent.agent == kind
+      and stable_pane(agent)
+      and vim.fs.normalize(type(agent_cwd) == "string" and agent_cwd or "") == cwd
+    then
+      return agent
+    end
+  end
+end
+
+-- Read-before-create reuse: avoids creating and rolling back an empty pane
+-- whenever Ajans already owns a live agent for this tool and cwd. Lookup
+-- failures stay advisory so discovery hiccups never block a fresh start.
+---@param self ajans.cli.muxer.Herdr
+---@param placement "workspace"|"tab"|"split"
+---@return boolean adopted
+function M:adopt_owned_agent(placement)
+  if not registered_kind(self) then
+    return false
+  end
+  local result = M.request({ "agent", "list" }, { notify = false, stopped_ok = true })
+  local agent = exact_owned_agent(self, result and result.agents)
+  if not agent then
+    return false
+  end
+  self:set_agent(agent, placement)
+  return true
+end
+
 ---@param pane table
 ---@return table? resource
 ---@return boolean? agent
+---@return boolean? adopted
 function M:launch(pane)
   local kind = registered_kind(self)
   if not kind then
@@ -661,6 +723,24 @@ function M:launch(pane)
     return result ~= nil or not pane_not_ready(start_error)
   end, M.PANE_READY_INTERVAL)
   if not result then
+    if agent_name_taken(start_error) then
+      -- Another process won the race for this deterministic name; try to
+      -- adopt its agent so callers can drop the freshly created shell.
+      local list = M.request({ "agent", "list" }, { notify = false, stopped_ok = true })
+      local existing = exact_owned_agent(self, list and list.agents)
+      if existing then
+        return existing, true, true
+      end
+      -- Fail closed: a mismatched agent is foreign state Ajans must never
+      -- close, rename, or drive; only manual inspection can resolve it.
+      Util.error(
+        ("Herdr agent start failed: %s\nInspect the conflicting agent with `herdr agent get %s` and close or rename it manually before retrying."):format(
+          start_error,
+          self:agent_name()
+        )
+      )
+      return
+    end
     Util.error("Herdr agent start failed: " .. (start_error or "destination pane did not become ready"))
     return
   end
@@ -728,6 +808,9 @@ end
 ---@return ajans.cli.terminal.Cmd? cmd
 ---@return boolean started
 function M:start_workspace()
+  if self:adopt_owned_agent("workspace") then
+    return { cmd = { "herdr", "agent", "attach", self.herdr_terminal_id } }, true
+  end
   local args = with_launch_environment(self, {
     "workspace",
     "create",
@@ -756,10 +839,14 @@ function M:start_workspace()
     Util.error("Herdr workspace creation response is missing a stable root pane")
     return nil, false
   end
-  local resource, agent = self:launch(pane)
+  local resource, agent, adopted = self:launch(pane)
   if not resource then
     rollback("workspace", workspace_id)
     return nil, false
+  end
+  if adopted then
+    -- The race loser's workspace only ever hosted an empty shell pane.
+    rollback("workspace", workspace_id)
   end
   self:set_resource(resource, "workspace", agent == true)
   local attach_kind = agent and "agent" or "terminal"
@@ -780,6 +867,10 @@ end
 function M:start_tab()
   if not self:have_host_ids() then
     return nil, false
+  end
+  if self:adopt_owned_agent("tab") then
+    Util.info(AGENT_REUSE_MESSAGE:format(self.tool.name))
+    return nil, true
   end
   local workspace_id = vim.env.HERDR_WORKSPACE_ID
   local args = with_launch_environment(self, {
@@ -808,10 +899,16 @@ function M:start_tab()
     Util.error("Herdr tab creation response is missing a stable root pane")
     return nil, false
   end
-  local resource, agent = self:launch(pane)
+  local resource, agent, adopted = self:launch(pane)
   if not resource then
     rollback("tab", tab_id)
     return nil, false
+  end
+  if adopted then
+    rollback("tab", tab_id)
+    self:set_resource(resource, "tab", true)
+    Util.info(AGENT_REUSE_MESSAGE:format(self.tool.name))
+    return nil, true
   end
   self:set_resource(resource, "tab", agent == true)
   Util.info(("Started **%s** in a new Herdr tab"):format(self.tool.name))
@@ -913,6 +1010,10 @@ function M:start_split()
     Util.error("Herdr split creation requires `HERDR_PANE_ID`")
     return nil, false
   end
+  if self:adopt_owned_agent("split") then
+    Util.info(AGENT_REUSE_MESSAGE:format(self.tool.name))
+    return nil, true
+  end
   local workspace_id = vim.env.HERDR_WORKSPACE_ID
   local tab_id = vim.env.HERDR_TAB_ID
   local direction = Config.cli.mux.split.vertical and "right" or "down"
@@ -940,10 +1041,18 @@ function M:start_split()
     Util.error("Herdr pane split response is missing a stable pane")
     return nil, false
   end
-  local resource, agent = self:launch(pane)
+  local resource, agent, adopted = self:launch(pane)
   if not resource then
     rollback("pane", pane.pane_id)
     return nil, false
+  end
+  if adopted then
+    -- An adopted agent keeps its existing layout; the fresh split pane is
+    -- only an empty shell and must not survive the failed launch.
+    rollback("pane", pane.pane_id)
+    self:set_resource(resource, "split", true)
+    Util.info(AGENT_REUSE_MESSAGE:format(self.tool.name))
+    return nil, true
   end
   if not self:size_split(pane.pane_id, direction) then
     rollback("pane", pane.pane_id)
@@ -960,6 +1069,8 @@ function M:start()
   if not M.ensure_server() then
     return nil, false
   end
+  -- Advisory only: integration gaps must never block or delay a session.
+  Integrations.advise(self.tool.name, M._run)
   if not self.external then
     return self:start_workspace()
   elseif Config.cli.mux.create == "window" then
@@ -1066,6 +1177,42 @@ function M:is_running_async(callback)
   end
 end
 
+--- Screen-based input readiness: a matching process is not proof the TUI can
+--- receive input, and splash or trust screens silently swallow prompts.
+---@param self ajans.cli.muxer.Herdr
+---@return boolean ready
+local function screen_input_ready(self)
+  local ready = self.tool.mux_ready
+  if not ready or not self.herdr_pane_id then
+    return true
+  end
+  local dump = M.command({
+    "pane",
+    "read",
+    self.herdr_pane_id,
+    "--source",
+    "visible",
+    "--lines",
+    tostring(M.SCREEN_READY_LINES),
+    "--format",
+    "text",
+  }, { notify = false })
+  if not dump then
+    return false
+  end
+  for _, marker in ipairs(ready.blocked or {}) do
+    if dump:find(marker, 1, true) then
+      return false
+    end
+  end
+  for _, marker in ipairs(ready.required or {}) do
+    if not dump:find(marker, 1, true) then
+      return false
+    end
+  end
+  return true
+end
+
 ---@param self ajans.cli.muxer.Herdr
 ---@return boolean
 local function pane_runs_expected_tool(self)
@@ -1099,6 +1246,9 @@ local function pane_runs_expected_tool(self)
     end
   end
   if self._authorized_pid then
+    return false
+  end
+  if matched_pid and not screen_input_ready(self) then
     return false
   end
   self._authorized_pid = matched_pid

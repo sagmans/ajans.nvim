@@ -179,6 +179,10 @@ describe("health", function()
     Herdr.server_status = function()
       return { running = true, compatible = true, restart_needed = true }
     end
+    Herdr._run = function(cmd)
+      assert.are.same({ "herdr", "integration", "status" }, cmd)
+      return { code = 0, stdout = "pi: current (v8)\nants: current (v2)\n", stderr = "" }
+    end
     local reports = reporter()
 
     require("ajans.health").check()
@@ -195,6 +199,87 @@ describe("health", function()
     assert.are.same({}, reports.error)
   end)
 
+  it("reports current Herdr integrations for installed mapped tools", function()
+    setup_config({ cli = { mux = { backend = "herdr" } } })
+    Session.selected_backend = function()
+      return "herdr"
+    end
+    Herdr.validate = function()
+      return true, nil, "0.8.0"
+    end
+    Herdr.server_status = function()
+      return { running = true, compatible = true }
+    end
+    Herdr._run = function(cmd)
+      assert.are.same({ "herdr", "integration", "status" }, cmd)
+      return { code = 0, stdout = "pi: current (v8)\nantigravity-cli: current (v2)\n", stderr = "" }
+    end
+    vim.fn.executable = function()
+      return 1
+    end
+    local reports = reporter()
+
+    require("ajans.health").check()
+
+    assert.is_true(vim.tbl_contains(reports.ok, "`pi` Herdr integration is current"))
+    assert.is_true(vim.tbl_contains(reports.ok, "`antigravity` Herdr integration is current"))
+    assert.are.same({}, reports.error)
+  end)
+
+  it("warns about missing or stale Herdr integrations without installing", function()
+    setup_config({ cli = { mux = { backend = "herdr" } } })
+    Session.selected_backend = function()
+      return "herdr"
+    end
+    Herdr.validate = function()
+      return true, nil, "0.8.0"
+    end
+    Herdr.server_status = function()
+      return { running = true, compatible = true }
+    end
+    Herdr._run = function(cmd)
+      assert.are.same({ "herdr", "integration", "status" }, cmd)
+      return { code = 0, stdout = "pi: not installed (x)\nantigravity-cli: stale (v1)\n", stderr = "" }
+    end
+    vim.fn.executable = function()
+      return 1
+    end
+    local reports = reporter()
+
+    require("ajans.health").check()
+
+    assert.are.equal(2, #reports.warn)
+    assert.matches("herdr integration install antigravity%-cli", reports.warn[1])
+    assert.matches("herdr integration install pi", reports.warn[2])
+    assert.are.same({}, reports.error)
+  end)
+
+  it("keeps integration query failures advisory", function()
+    setup_config({ cli = { mux = { backend = "herdr" } } })
+    Session.selected_backend = function()
+      return "herdr"
+    end
+    Herdr.validate = function()
+      return true, nil, "0.8.0"
+    end
+    Herdr.server_status = function()
+      return { running = true, compatible = true }
+    end
+    Herdr._run = function(cmd)
+      assert.are.same({ "herdr", "integration", "status" }, cmd)
+      return { code = 1, stdout = "", stderr = "status unavailable" }
+    end
+    vim.fn.executable = function()
+      return 1
+    end
+    local reports = reporter()
+
+    require("ajans.health").check()
+
+    assert.are.equal(2, #reports.warn)
+    assert.matches("Unable to query the `antigravity` Herdr integration: status unavailable", reports.warn[1])
+    assert.are.same({}, reports.error)
+  end)
   it("reports an unusable running Herdr API socket", function()
     setup_config({ cli = { mux = { backend = "herdr" } } })
     Session.selected_backend = function()

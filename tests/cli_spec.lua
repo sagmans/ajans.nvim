@@ -169,6 +169,174 @@ describe("cli", function()
     assert.are.equal(1, submits)
   end)
 
+  local function retryable_session(tool_name, session_id, fail_send, fail_submit)
+    local sends = {}
+    local submits = 0
+    local authorization
+    local session = {
+      id = session_id,
+      authorize_automated_input = function(_, done)
+        authorization = done
+      end,
+      send = function(_, value)
+        sends[#sends + 1] = value
+        return not fail_send or #sends > 1
+      end,
+      submit = function()
+        submits = submits + 1
+        return not fail_submit or submits > 1
+      end,
+    }
+    local state = {
+      tool = {
+        name = tool_name,
+        format = function(_, text)
+          return "formatted " .. tostring(text and "yes" or "no")
+        end,
+      },
+      session = session,
+    }
+    StateDouble.with = function(callback)
+      callback(state)
+    end
+    Session.owns = function(candidate)
+      return candidate == session
+    end
+    vim.schedule = function(callback)
+      callback()
+    end
+    return {
+      session = session,
+      state = state,
+      authorize = function(accepted)
+        authorization(accepted)
+      end,
+      sends = function()
+        return sends
+      end,
+      submits = function()
+        return submits
+      end,
+    }
+  end
+
+  it("retains a failed send for an explicit retry", function()
+    local Cli = require("ajans.cli")
+    Cli.clear_retry()
+    local warnings = {}
+    local infos = {}
+    local original_info = Util.info
+    Util.warn = function(message)
+      warnings[#warnings + 1] = message
+    end
+    Util.info = function(message)
+      infos[#infos + 1] = message
+    end
+    local double = retryable_session("pi", "session-1", true, false)
+
+    Cli.send({ text = { { { "context" } } }, name = "pi" })
+    double.authorize(true)
+
+    assert.matches("redeliver with `:Ajans cli retry name=<tool>`", warnings[1])
+
+    Cli.retry({ name = "pi" })
+    double.authorize(true)
+
+    assert.are.same({ "formatted yes\n", "formatted yes\n" }, double.sends())
+    assert.matches("Redelivered", infos[1])
+
+    Cli.retry({ name = "pi" })
+    assert.matches("No undelivered prompt", warnings[#warnings])
+    Util.info = original_info
+    Cli.clear_retry()
+  end)
+
+  it("retries only the submit phase after a failed submit", function()
+    local Cli = require("ajans.cli")
+    Cli.clear_retry()
+    local warnings = {}
+    Util.warn = function(message)
+      warnings[#warnings + 1] = message
+    end
+    local double = retryable_session("pi", "session-1", false, true)
+
+    Cli.send({ text = { { { "context" } } }, submit = true, name = "pi" })
+    double.authorize(true)
+
+    assert.are.equal(1, #double.sends())
+    assert.are.equal(1, double.submits())
+    assert.matches("Delivery to the agent failed", warnings[1])
+
+    Cli.retry({ name = "pi" })
+    double.authorize(true)
+
+    assert.are.equal(1, #double.sends())
+    assert.are.equal(2, double.submits())
+    Cli.clear_retry()
+  end)
+
+  it("keeps nothing when authorization times out", function()
+    local Cli = require("ajans.cli")
+    Cli.clear_retry()
+    local warnings = {}
+    Util.warn = function(message)
+      warnings[#warnings + 1] = message
+    end
+    local double = retryable_session("pi", "session-1", true, false)
+
+    Cli.send({ text = { { { "context" } } }, name = "pi" })
+    double.authorize(false)
+
+    assert.are.same({}, double.sends())
+    assert.matches("Refusing to send", warnings[1])
+
+    Cli.retry({ name = "pi" })
+    assert.matches("No undelivered prompt", warnings[#warnings])
+    Cli.clear_retry()
+  end)
+
+  it("refuses retry after the session identity changed", function()
+    local Cli = require("ajans.cli")
+    Cli.clear_retry()
+    local warnings = {}
+    Util.warn = function(message)
+      warnings[#warnings + 1] = message
+    end
+    local first = retryable_session("pi", "session-1", true, false)
+    Cli.send({ text = { { { "context" } } }, name = "pi" })
+    first.authorize(true)
+
+    local second = retryable_session("pi", "session-2", false, false)
+    Cli.retry({ name = "pi" })
+
+    assert.matches("session changed since the failed delivery", warnings[#warnings])
+    assert.are.same({}, second.sends())
+
+    Cli.retry({ name = "pi" })
+    assert.matches("No undelivered prompt", warnings[#warnings])
+    Cli.clear_retry()
+  end)
+
+  it("keeps the pending prompt when retry authorization is refused", function()
+    local Cli = require("ajans.cli")
+    Cli.clear_retry()
+    local warnings = {}
+    Util.warn = function(message)
+      warnings[#warnings + 1] = message
+    end
+    local double = retryable_session("pi", "session-1", true, false)
+    Cli.send({ text = { { { "context" } } }, name = "pi" })
+    double.authorize(true)
+
+    Cli.retry({ name = "pi" })
+    double.authorize(false)
+    assert.matches("not ready for automated input", warnings[#warnings])
+
+    Cli.retry({ name = "pi" })
+    double.authorize(true)
+    assert.are.equal(2, #double.sends())
+    Cli.clear_retry()
+  end)
   it("selects with an empty default filter", function()
     local selected_opts
     package.loaded["ajans.cli.ui.select"] = {
