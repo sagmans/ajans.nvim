@@ -5,6 +5,45 @@ local Util = require("ajans.util")
 
 local M = {}
 
+-- Undelivered prompts survive only in this slot: never logged, persisted, or
+-- copied elsewhere, and replaced by the next failed delivery.
+---@alias ajans.cli.RetryPhase "send"|"submit"
+
+---@class ajans.cli.Retry
+---@field msg string
+---@field submit boolean
+---@field phase ajans.cli.RetryPhase
+---@field session_id string
+---@field tool_name string
+
+local pending_retry ---@type ajans.cli.Retry?
+
+local RETRY_COMMAND = ":Ajans cli retry name=<tool>"
+local NO_PENDING = "No undelivered prompt to retry."
+local DELIVERY_FAILED = ("Delivery to the agent failed. Inspect the agent pane, resolve any sign-in, trust, or approval screen, run :checkhealth ajans, then redeliver with `%s` once resolved."):format(
+  RETRY_COMMAND
+)
+local RETRY_REFUSED = "Refusing to retry: the %s session changed since the failed delivery; send the prompt again."
+local RETRY_NOT_READY = ("Refusing to retry: %s is not ready for automated input. Resolve the pane, then run `%s` again."):format(
+  "%s",
+  RETRY_COMMAND
+)
+
+---@param tool_name string
+---@param session table
+---@param msg string
+---@param submit boolean
+---@param phase ajans.cli.RetryPhase
+local function retain(tool_name, session, msg, submit, phase)
+  pending_retry = {
+    msg = msg,
+    submit = submit,
+    phase = phase,
+    session_id = session.id,
+    tool_name = tool_name,
+  }
+end
+
 ---@class ajans.Prompt
 ---@field msg string
 
@@ -213,9 +252,16 @@ function M.send(opts)
           Util.warn(("Refusing to send: `%s` is no longer the active session process"):format(state.tool.name))
           return
         end
-        session:send(msg .. "\n")
+        if session:send(msg .. "\n") == false then
+          retain(state.tool.name, session, msg, opts.submit == true, "send")
+          Util.warn(DELIVERY_FAILED)
+          return
+        end
         if opts.submit and Session.owns(session) then
-          session:submit()
+          if session:submit() == false then
+            retain(state.tool.name, session, msg, true, "submit")
+            Util.warn(DELIVERY_FAILED)
+          end
         end
       end)
     end)
@@ -225,6 +271,68 @@ function M.send(opts)
     focus = opts.focus,
     show = true,
   })
+end
+
+--- Redeliver the most recently failed prompt. Never automatic: the user must
+--- invoke it after resolving the agent pane. Refuses after the bound session
+--- identity, tool, or process ownership changed.
+---@param opts? {name?:string, filter?:ajans.cli.Filter}
+function M.retry(opts)
+  opts = filter_opts(opts)
+  if not pending_retry then
+    Util.warn(NO_PENDING)
+    return
+  end
+  local pending = pending_retry
+  if opts.filter.name and opts.filter.name ~= pending.tool_name then
+    Util.warn(("No undelivered prompt for `%s` (pending: `%s`)"):format(opts.filter.name, pending.tool_name))
+    return
+  end
+  State.with(function(state)
+    local session = state.session
+    if
+      not session
+      or state.tool.name ~= pending.tool_name
+      or session.id ~= pending.session_id
+      or not Session.owns(session)
+    then
+      -- The bound session is gone; redelivering to a different one could
+      -- leak the prompt into an unrelated agent.
+      pending_retry = nil
+      Util.warn(RETRY_REFUSED:format(pending.tool_name))
+      return
+    end
+    session:authorize_automated_input(function(accepted)
+      if not accepted or not Session.owns(session) then
+        Util.warn(RETRY_NOT_READY:format(state.tool.name))
+        return
+      end
+      if pending.phase == "send" then
+        if session:send(pending.msg .. "\n") == false then
+          Util.warn(DELIVERY_FAILED)
+          return
+        end
+        if pending.submit and session:submit() == false then
+          retain(state.tool.name, session, pending.msg, true, "submit")
+          Util.warn(DELIVERY_FAILED)
+          return
+        end
+      elseif session:submit() == false then
+        Util.warn(DELIVERY_FAILED)
+        return
+      end
+      pending_retry = nil
+      Util.info(("Redelivered the pending prompt to `%s`"):format(state.tool.name))
+    end)
+  end, {
+    attach = true,
+    filter = opts.filter,
+  })
+end
+
+--- Forget any retained prompt without redelivering it
+function M.clear_retry()
+  pending_retry = nil
 end
 
 ---@deprecated use `require("ajans.cli").prompt()`

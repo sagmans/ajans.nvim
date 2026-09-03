@@ -25,6 +25,19 @@ local function capture_errors()
 end
 
 describe("commands", function()
+  it("routes cli retry to the retry API", function()
+    local called
+    local original = package.loaded["ajans.cli"]
+    package.loaded["ajans.cli"] = {
+      retry = function(opts)
+        called = opts
+      end,
+    }
+    local cmd = Commands.commands.cli.retry
+    cmd({ name = "pi" })
+    package.loaded["ajans.cli"] = original
+    assert.are.same({ name = "pi" }, called)
+  end)
   describe("argparse", function()
     local cases = {
       {

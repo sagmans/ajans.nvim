@@ -33,6 +33,9 @@ M.commands = {
     prompt = function()
       require("ajans.cli").prompt()
     end,
+    retry = function(opts)
+      require("ajans.cli").retry(opts)
+    end,
   },
 }
 
