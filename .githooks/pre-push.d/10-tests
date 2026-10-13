@@ -1,7 +1,15 @@
 #!/bin/sh
-# The mini.test suite is too slow for every commit, so it gates the push;
-# replaces the former Tests CI job.
+# The test suite replaces the removed CI "Tests" job; it runs against each
+# pushed commit, not just HEAD.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
-echo "pre-push: ./scripts/test"
-./scripts/test
+# shellcheck disable=SC1090,SC1091  # dotf dispatcher helpers
+. "${HOOK_HELPERS:?run by the dotf hook dispatcher}"
+# for loop, not `| while`: a failure must exit this script (fail closed).
+shas=$(pushed_shas <"$HOOK_STDIN_FILE") || exit 1
+shas=$(printf '%s\n' "$shas" | sort -u)
+# shellcheck disable=SC2086  # one SHA per word
+for sha in $shas; do
+	echo "pre-push: ./scripts/test at $(git rev-parse --short "$sha")"
+	at_sha "$sha" ./scripts/test || exit 1
+done

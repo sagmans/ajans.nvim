@@ -3,13 +3,15 @@
 # files. Replaces the former Debug Messages CI job.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
+# shellcheck disable=SC1090,SC1091  # dotf dispatcher helpers
+. "${HOOK_HELPERS:?run by the dotf hook dispatcher}"
 # Uncommented dd( calls, the project's debug-print helper.
 DEBUG_CALL_RE='^(?!\s*--).*\bdd\('
-files=$(git diff --cached --name-only --diff-filter=ACMR -- 'lua/*.lua' 'lua/**/*.lua')
+files=$(staged_git diff --cached --name-only --diff-filter=ACMR -- 'lua/*.lua' 'lua/**/*.lua')
 [ -n "$files" ] || exit 0
 echo "pre-commit: debug-call scan"
 # shellcheck disable=SC2086 # file names in this repo contain no whitespace
-if git grep --cached -n -P "$DEBUG_CALL_RE" -- $files; then
+if staged_git grep --cached -n -P "$DEBUG_CALL_RE" -- $files; then
 	echo "error: debug dd() calls found in staged files" >&2
 	exit 1
 fi
