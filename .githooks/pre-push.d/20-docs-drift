@@ -1,14 +1,24 @@
 #!/bin/sh
-# Generated docs must match the source they are built from; replaces the
-# former Docs Drift CI job. Regenerating rewrites the files in place, so the
-# diff shows exactly what to commit.
+# Generated docs must match the code being pushed (replaces the CI
+# "Docs Drift" job); checked for each pushed commit.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
-GENERATED_DOCS='CONFIG.md KEYMAPS.md USAGE.md'
-echo "pre-push: ./scripts/docs + drift check"
-./scripts/docs
-# shellcheck disable=SC2086 # word splitting of the file list is intended
-if ! git diff --exit-code -- $GENERATED_DOCS; then
-	echo "error: generated docs are stale; commit the regenerated files" >&2
-	exit 1
-fi
+# shellcheck disable=SC1090,SC1091  # dotf dispatcher helpers
+. "${HOOK_HELPERS:?run by the dotf hook dispatcher}"
+drift() {
+	GENERATED_DOCS='CONFIG.md KEYMAPS.md USAGE.md'
+	./scripts/docs
+	# shellcheck disable=SC2086  # word-split list of paths
+	if ! git diff --exit-code -- $GENERATED_DOCS; then
+		echo "error: generated docs are stale; commit the regenerated files" >&2
+		exit 1
+	fi
+}
+# for loop, not `| while`: a failure must exit this script (fail closed).
+shas=$(pushed_shas <"$HOOK_STDIN_FILE") || exit 1
+shas=$(printf '%s\n' "$shas" | sort -u)
+# shellcheck disable=SC2086  # one SHA per word
+for sha in $shas; do
+	echo "pre-push: ./scripts/docs + drift check at $(git rev-parse --short "$sha")"
+	at_sha "$sha" drift || exit 1
+done
