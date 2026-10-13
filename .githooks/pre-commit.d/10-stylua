@@ -1,0 +1,10 @@
+#!/bin/sh
+# Formatting drift is cheap to fix before commit and noisy in review; this
+# replaces the former Stylua CI job.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+# Same paths the CI job checked.
+STYLUA_PATHS='lua tests'
+echo "pre-commit: stylua --check $STYLUA_PATHS"
+# shellcheck disable=SC2086 # word splitting of the path list is intended
+stylua --check $STYLUA_PATHS
