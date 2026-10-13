@@ -23,14 +23,15 @@ Contributor notes for ajans.nvim.
 
 ## Git hooks
 
-There is no push or pull-request CI for checks; they run in `.githooks/<hook>.d/`. The global git hooks (dotf, local-hooks standard v2) run those scripts after their own sign-off and signature checks. The repository must not set `core.hooksPath`. Once per clone, remove any old value, then review and trust the hooks (again whenever `.githooks` changes):
+There is no push or pull-request CI for checks; they run in the repo's own git hooks. Once per clone:
 
 ```bash
 ./scripts/setup-hooks
-githooks-trust
 ```
 
-Then `pre-commit` runs `stylua --check lua tests` and rejects `dd()` debug calls in staged Lua files, and `pre-push` runs `./scripts/test` and the generated-docs drift check for every pushed commit. Do not bypass them with `--no-verify`. The only remaining workflow, `PR Title`, validates pull-request titles, which no local hook can see.
+It sets the local `core.hooksPath=.githooks`. Each hook runs the generic checks first (sign-off, message structure, gitleaks secret scan, signed commits on push), then `.githooks/<hook>.d/`.
+
+Then `pre-commit` runs `stylua --check lua tests` and rejects `dd()` debug calls in staged Lua files, and `pre-push` runs `./scripts/test` and the generated-docs drift check for every pushed commit. All checks must pass before a push; do not bypass them with `--no-verify`. The only remaining workflow, `PR Title`, validates pull-request titles, which no local hook can see.
 
 ## Commands
 

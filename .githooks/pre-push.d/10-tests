@@ -3,8 +3,8 @@
 # pushed commit, not just HEAD.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
-# shellcheck disable=SC1090,SC1091  # dotf dispatcher helpers
-. "${HOOK_HELPERS:?run by the dotf hook dispatcher}"
+# shellcheck disable=SC1090,SC1091  # path exported by .githooks/lib/run-local.sh
+. "${HOOK_HELPERS:?run from .githooks (scripts/setup-hooks)}"
 # for loop, not `| while`: a failure must exit this script (fail closed).
 shas=$(pushed_shas <"$HOOK_STDIN_FILE") || exit 1
 shas=$(printf '%s\n' "$shas" | sort -u)

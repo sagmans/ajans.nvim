@@ -10,6 +10,12 @@ This repository contains `ajans.nvim`, a Neovim plugin that provides an integrat
 - Reference docs are generated automatically via `./scripts/docs`, which updates marked blocks in `CONFIG.md`, `KEYMAPS.md`, and `USAGE.md`.
 - Code style is Lua with `stylua` / `selene` configs already included.
 
+## Git hooks
+
+After cloning, run `scripts/setup-hooks` once. It sets `core.hooksPath=.githooks` for this clone and its worktrees. The hooks run the generic checks first (DCO sign-off, message structure, gitleaks secret scan, signed commits on push), then this repo's checks in `.githooks/<hook>.d/`. They replace pull-request CI.
+
+All checks must pass before a push. Never bypass them with `--no-verify`. The generic files in `.githooks/` and `scripts/setup-hooks` are copies of the dotf template (`templates/githooks/`); change them there, not here.
+
 ## Everyday Commands
 
 - `./scripts/test` – runs the `mini.test` suite using the Lazy.nvim harness; automatically installs test dependencies. Set `LAZY_OFFLINE=1` when you need to skip the bootstrap download (for fully offline CI).
