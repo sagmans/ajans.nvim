@@ -21,6 +21,16 @@ Contributor notes for ajans.nvim.
 | `lua/ajans/docs.lua` | Docs generation script. |
 | `doc/ajans.nvim.txt` | Neovim help file for `:help ajans.nvim`; `.txt` is standard Vim helpdoc format. |
 
+## Git hooks
+
+There is no push or pull-request CI for checks; they run in tracked git hooks. Enable them once per clone:
+
+```bash
+./scripts/setup-hooks
+```
+
+Your global git hooks run first. Then `pre-commit` runs `stylua --check lua tests` and rejects `dd()` debug calls in staged Lua files, and `pre-push` runs `./scripts/test` and the generated-docs drift check. Do not bypass them with `--no-verify`. The only remaining workflow, `PR Title`, validates pull-request titles, which no local hook can see.
+
 ## Commands
 
 ```bash
@@ -38,9 +48,9 @@ Notes:
 
 ## Generated docs
 
-Do not edit generated blocks directly. Update source, then run `./scripts/docs`. CI reruns this command and rejects drift instead of committing generated files.
+Do not edit generated blocks directly. Update source, then run `./scripts/docs`. The pre-push hook reruns this command and rejects drift.
 
-`doc/ajans.nvim.txt` remains pull-request-reviewed so CI stays read-only. Keep it synchronized when README user-facing behavior changes.
+`doc/ajans.nvim.txt` remains pull-request-reviewed rather than generated. Keep it synchronized when README user-facing behavior changes.
 
 `lua/ajans/docs.lua` maps generated snippets to split docs with `Docs.save(...)`:
 

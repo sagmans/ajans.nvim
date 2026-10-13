@@ -1,0 +1,14 @@
+#!/bin/sh
+# Generated docs must match the source they are built from; replaces the
+# former Docs Drift CI job. Regenerating rewrites the files in place, so the
+# diff shows exactly what to commit.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+GENERATED_DOCS='CONFIG.md KEYMAPS.md USAGE.md'
+echo "pre-push: ./scripts/docs + drift check"
+./scripts/docs
+# shellcheck disable=SC2086 # word splitting of the file list is intended
+if ! git diff --exit-code -- $GENERATED_DOCS; then
+	echo "error: generated docs are stale; commit the regenerated files" >&2
+	exit 1
+fi

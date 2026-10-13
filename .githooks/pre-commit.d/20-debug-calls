@@ -1,0 +1,15 @@
+#!/bin/sh
+# Stray dd() debug calls print into users' editors; reject them in staged Lua
+# files. Replaces the former Debug Messages CI job.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+# Uncommented dd( calls, the project's debug-print helper.
+DEBUG_CALL_RE='^(?!\s*--).*\bdd\('
+files=$(git diff --cached --name-only --diff-filter=ACMR -- 'lua/*.lua' 'lua/**/*.lua')
+[ -n "$files" ] || exit 0
+echo "pre-commit: debug-call scan"
+# shellcheck disable=SC2086 # file names in this repo contain no whitespace
+if git grep --cached -n -P "$DEBUG_CALL_RE" -- $files; then
+	echo "error: debug dd() calls found in staged files" >&2
+	exit 1
+fi
