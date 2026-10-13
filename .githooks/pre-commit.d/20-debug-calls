@@ -3,8 +3,8 @@
 # files. Replaces the former Debug Messages CI job.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
-# shellcheck disable=SC1090,SC1091  # dotf dispatcher helpers
-. "${HOOK_HELPERS:?run by the dotf hook dispatcher}"
+# shellcheck disable=SC1090,SC1091  # path exported by .githooks/lib/run-local.sh
+. "${HOOK_HELPERS:?run from .githooks (scripts/setup-hooks)}"
 # Uncommented dd( calls, the project's debug-print helper.
 DEBUG_CALL_RE='^(?!\s*--).*\bdd\('
 files=$(staged_git diff --cached --name-only --diff-filter=ACMR -- 'lua/*.lua' 'lua/**/*.lua')
