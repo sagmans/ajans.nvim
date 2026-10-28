@@ -31,7 +31,7 @@ There is no push or pull-request CI for checks; they run in the repo's own git h
 
 It sets the local `core.hooksPath=.githooks`. Each hook runs the generic checks first (sign-off, message structure, gitleaks secret scan, signed commits on push), then `.githooks/<hook>.d/`.
 
-Then `pre-commit` runs `stylua --check lua tests` and rejects `dd()` debug calls in staged Lua files, and `pre-push` runs `./scripts/test` and the generated-docs drift check for every pushed commit. All checks must pass before a push; do not bypass them with `--no-verify`. The only remaining workflow, `PR Title`, validates pull-request titles, which no local hook can see.
+Then `pre-commit` runs `stylua --check lua tests` and rejects `dd()` debug calls in staged Lua files, and `pre-push` runs `./scripts/test` and the generated-docs drift check for every pushed commit. All checks must pass before a push; do not bypass them with `--no-verify`. There is no CI workflow: work lands directly on `main`, so the local hooks are the only gate.
 
 ## Commands
 
