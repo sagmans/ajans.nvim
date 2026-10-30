@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.3.0](https://github.com/sagmans/ajans.nvim/compare/v0.2.0...v0.3.0) (2026-10-31)
+
 ### Features
 
 * **cli:** focus newly created multiplexer windows, tabs, and splits by default. Set `cli.mux.focus = false` to keep Neovim focused
