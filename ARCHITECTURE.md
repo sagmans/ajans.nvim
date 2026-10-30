@@ -1,6 +1,6 @@
 # Architecture
 
-Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI model. It manages tmux or Herdr sessions, a Neovim terminal wrapper, prompt/context rendering, picker integrations, and status reporting.
+Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI model. It manages tmux, Herdr, or Rex sessions, a Neovim terminal wrapper, prompt/context rendering, picker integrations, and status reporting.
 
 ## Module map
 
@@ -11,7 +11,7 @@ Ajans is a Neovim plugin around local AI CLI tools. It does not implement an AI 
 | CLI API | `lua/ajans/cli/init.lua` | Public API: `select`, `show`, `toggle`, `focus`, `hide`, `close`, `send`, `prompt`, `render`, and memory-only `retry` for failed pane sends or submits. |
 | Tool registry | `lua/ajans/cli/tool.lua`, `aj/cli/*.lua` | Load default tool configs from runtime path and merge user overrides. |
 | State | `lua/ajans/cli/state.lua` | Combine installed tools, running sessions, attached sessions, and user filters. |
-| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua`, `lua/ajans/cli/session/herdr.lua`, `lua/ajans/cli/session/herdr/*.lua` | Backend selection and lifecycle contracts; focused Herdr transport, discovery, layout, and integration-advisory modules. |
+| Sessions | `lua/ajans/cli/session/init.lua`, `lua/ajans/cli/session/tmux.lua`, `lua/ajans/cli/session/herdr.lua`, `lua/ajans/cli/session/herdr/*.lua`, `lua/ajans/cli/session/rex.lua` | Backend selection and lifecycle contracts; focused Herdr transport, discovery, layout, and integration-advisory modules. |
 | Terminal wrapper | `lua/ajans/cli/terminal.lua`, `lua/ajans/cli/scrollback.lua` | Neovim terminal window/buffer lifecycle, keymaps, send queue, mode restore, scrollback. |
 | Context | `lua/ajans/cli/context/*.lua`, `lua/ajans/text.lua`, `lua/ajans/treesitter.lua` | Render prompt variables into strings with optional highlighting metadata. |
 | Pickers | `lua/ajans/cli/picker/*.lua`, `lua/ajans/cli/ui/*.lua` | Tool/prompt/file/buffer selection through `vim.ui.select`, snacks, Telescope, or fzf-lua. |
@@ -51,7 +51,7 @@ authorization verifies process identity and optional screen markers
 tool formatter adapts text for target CLI
         │
         ▼
-selected tmux or Herdr backend sends text to pane
+selected mux backend sends text to pane
         │
         ▼
 failed send or submit becomes a memory-only retry record
@@ -65,8 +65,9 @@ Bundled tool configs live in `aj/cli/`.
 
 ## Session model
 
-Ajans resolves one active backend during session setup. Explicit `tmux` or `herdr` configuration wins. Auto-selection considers the host environment, a running compatible Herdr server, and installed executables.
+Ajans resolves one active backend during session setup. Explicit `tmux`, `herdr`, or `rex` configuration wins. Auto-selection considers the host environment, a running compatible Herdr or Rex server, and installed executables.
 
+- The Rex adapter drives a local Rex server (API revision `>= 7`) through the `rex` CLI only. Rex has no attachable terminal client, so Rex sessions are external-only and `create = "terminal"` fails closed. Discovery walks local process trees from Rex terminal child pids, automated input pins the server-reported foreground process incarnation, and prompt text travels on stdin. A remote Rex endpoint is refused because local process identity cannot vouch for it.
 - New sessions get stable names from tool name plus cwd hash.
 - The tmux adapter discovers panes with `tmux list-panes` and inspects process trees with `ps`, `/proc`, and `lsof` where available.
 - The Herdr adapter uses the `api snapshot` inventory available in supported Herdr releases. Stable Ajans names and Herdr labels classify known tools first; bounded process inspection is reserved for unmatched custom tools. It keeps Herdr terminal, pane, tab, workspace, and available process identities.
@@ -115,5 +116,5 @@ Session attach/detach emits user autocmds:
 
 - No hosted service dependency.
 - No bundled AI model.
-- One selected local session backend at a time: tmux or Herdr.
+- One selected local session backend at a time: tmux, Herdr, or Rex.
 - No automatic whole-file context unless you add custom context.

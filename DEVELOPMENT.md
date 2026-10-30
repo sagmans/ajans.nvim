@@ -75,9 +75,9 @@ Do not edit generated blocks directly. Update source, then run `./scripts/docs`.
 
 ## Session backend contract
 
-Both backend adapters implement `start`, `attach`, `detach`, `sessions`, `send`, `submit`, `dump`, and `is_running`. Automated delivery also uses `accepts_automated_input` and `authorize_automated_input`. Add behavior to the table-driven contract in `tests/mux_parity_spec.lua` when this interface changes.
+All backend adapters (tmux, Herdr, Rex) implement `start`, `attach`, `detach`, `sessions`, `send`, `submit`, `dump`, and `is_running`. Automated delivery also uses `accepts_automated_input` and `authorize_automated_input`. Add behavior to the table-driven contract in `tests/mux_parity_spec.lua` when this interface changes.
 
-Herdr command tests must mock `_run` and `_run_many`. The ordinary test harness must not inspect or mutate a developer's live Herdr server. Real lifecycle harnesses remain deferred to [Herdr issue #11](https://github.com/sagmans/ajans.nvim/issues/11) and [tmux issue #10](https://github.com/sagmans/ajans.nvim/issues/10). These harnesses must use isolated temporary namespaces and recorded-ID cleanup only.
+Herdr and Rex command tests must mock `_run` and `_run_many`. The ordinary test harness must not inspect or mutate a developer's live Herdr or Rex server. Real lifecycle harnesses remain deferred to [Herdr issue #11](https://github.com/sagmans/ajans.nvim/issues/11) and [tmux issue #10](https://github.com/sagmans/ajans.nvim/issues/10). These harnesses must use isolated temporary namespaces and recorded-ID cleanup only.
 
 ## Adding a CLI tool
 

@@ -180,14 +180,16 @@ Controls the Neovim terminal wrapper used to attach to tmux or Herdr sessions.
 
 Controls backend selection and session placement.
 
-- `backend = "auto"`: prefer a usable Herdr when it hosts Neovim, then a usable tmux when it hosts Neovim, then an already-running compatible Herdr server, the sole usable backend, and finally tmux as the compatibility fallback. A sole installed Herdr is selected even when invalid so health can report why.
-- `backend = "tmux"` or `"herdr"`: select that backend explicitly
+- `backend = "auto"`: prefer a usable Herdr when it hosts Neovim, then a usable tmux when it hosts Neovim, then a usable Rex when it hosts Neovim, then an already-running compatible Herdr or Rex server, the sole usable backend, and finally tmux as the compatibility fallback. A sole installed Herdr or Rex is selected even when invalid so health can report why.
+- `backend = "tmux"`, `"herdr"`, or `"rex"`: select that backend explicitly
 - `create = "terminal"`: attach the persistent session inside a Neovim terminal
-- `create = "window"`: when hosted by the backend, create a tmux window or Herdr tab
+- `create = "window"`: when hosted by the backend, create a tmux window, Herdr tab, or Rex window
 - `create = "split"`: when hosted by the backend, create a native split
-- `focus = true`: when hosted, focus the newly created tmux window/split or Herdr tab/split; set to `false` to keep focus in Neovim
-- `split.vertical` and `split.size`: external split direction and size; values at or below `1` are fractions, and larger values are terminal cells. Herdr validates that the result stays within its supported `0.1`-`0.9` layout range.
-- `dump`: requested scrollback lines. tmux keeps the configured value; Herdr clamps reads to its `1`-`1000` line limit.
+- `focus = true`: when hosted, focus the newly created window/split; set to `false` to keep focus in Neovim
+- `split.vertical` and `split.size`: external split direction and size; values at or below `1` are fractions, and larger values are terminal cells. Herdr validates that the result stays within its supported `0.1`-`0.9` layout range. Rex takes a `1`-`99` percent ratio and resolves cell sizes against the anchor block.
+- `dump`: requested scrollback lines. tmux keeps the configured value; Herdr clamps reads to its `1`-`1000` line limit. Rex returns its whole scrollback and Ajans keeps the last `1`-`1000` lines.
+
+Rex requires a server with API revision `>= 7` on macOS, Linux, or FreeBSD. Rex is external-only: it has no attachable terminal client, so sessions always stay in the Rex app and `create = "terminal"` fails with an error. When Neovim runs inside Rex (`REX_SESSION` and `REX_BLOCK` set), `create = "split"` and `"window"` place agents beside it; otherwise Ajans creates a dedicated Rex session. Only a local Rex server (unix socket) is driven, because automated-input authorization pins local process identity; a remote Rex host fails closed. Prompt text is sent on stdin, never in process arguments. Rex terminal blocks have no per-command environment option, so a tool's configured `env` is applied with `env(1)` in argv form.
 
 Herdr requires version `>= 0.8.0` on macOS or Linux. Herdr commands inherit `HERDR_SESSION` and `HERDR_SOCKET_PATH`, so named Herdr sessions work without extra Ajans configuration. Native Herdr tab/split creation requires the `HERDR_WORKSPACE_ID` and `HERDR_TAB_ID` values exported by Herdr; splits also require `HERDR_PANE_ID`. `create = "terminal"` needs none of these host IDs. A compatible server remains usable when Herdr recommends restart. Ajans-started servers receive a strict system/runtime environment allowlist; project variables are applied only to each new pane and do not persist in the shared server. Built-in tools recognized by Herdr use its registered-agent launch. Custom commands and unsupported tools fall back to an escaped shell launch in the created pane.
 

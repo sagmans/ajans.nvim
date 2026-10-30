@@ -2,13 +2,13 @@
 
 Multiplexer-backed Neovim sidecar for AI CLI tools.
 
-`ajans.nvim` is a simplified fork of [sidekick.nvim](https://github.com/folke/sidekick.nvim). It keeps the scope narrow: run local AI CLIs through tmux or Herdr, send editor context, and keep sessions alive across Neovim restarts.
+`ajans.nvim` is a simplified fork of [sidekick.nvim](https://github.com/folke/sidekick.nvim). It keeps the scope narrow: run local AI CLIs through tmux, Herdr, or Rex, send editor context, and keep sessions alive across Neovim restarts.
 
-Ajans supports tmux and [Herdr](https://herdr.dev) as full session backends. AI agents run in multiplexer sessions or panes, not as Neovim jobs. Neovim attaches through a lightweight terminal wrapper; when Neovim already runs inside the selected multiplexer, Ajans can also create native windows, tabs, or splits.
+Ajans supports tmux, [Herdr](https://herdr.dev), and [Rex](https://www.superlogical.com/rex) as session backends. AI agents run in multiplexer sessions or panes, not as Neovim jobs. Neovim attaches through a lightweight terminal wrapper; when Neovim already runs inside the selected multiplexer, Ajans can also create native windows, tabs, or splits. Rex is external-only: sessions stay in the Rex app because it has no attachable terminal client.
 
 ## What it does
 
-- Runs supported AI CLI tools through tmux or Herdr sessions and panes.
+- Runs supported AI CLI tools through tmux, Herdr, or Rex sessions and panes.
 - Opens a Neovim terminal wrapper for embedded sessions, or uses native backend windows/tabs and splits when configured.
 - Reuses persistent sessions across window changes and Neovim restarts.
 - Reuses an exact-match Herdr agent for the same tool and working directory. Foreign name conflicts fail closed.
@@ -25,7 +25,8 @@ Ajans supports tmux and [Herdr](https://herdr.dev) as full session backends. AI 
 - Neovim `>= 0.11.2`
 - One supported session backend:
   - [tmux](https://github.com/tmux/tmux/wiki), or
-  - [Herdr](https://herdr.dev) `>= 0.8.0` on macOS or Linux
+  - [Herdr](https://herdr.dev) `>= 0.8.0` on macOS or Linux, or
+  - [Rex](https://www.superlogical.com/rex) with API revision `>= 7` on macOS, Linux, or FreeBSD (local server only; sessions stay in the Rex app)
 - One or more AI CLI tools, such as Claude, Codex, Copilot, Antigravity, Opencode, or Qwen
 - Optional: [snacks.nvim](https://github.com/folke/snacks.nvim), Telescope, or fzf-lua for picker workflows
 - Optional: [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects) for `{function}` and `{class}` context
@@ -42,7 +43,7 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 }
 ```
 
-Ajans selects the backend automatically by default. Set `cli.mux.backend` to `"tmux"` or `"herdr"` to choose explicitly. Then run:
+Ajans selects the backend automatically by default. Set `cli.mux.backend` to `"tmux"`, `"herdr"`, or `"rex"` to choose explicitly. Then run:
 
 ```vim
 :checkhealth ajans

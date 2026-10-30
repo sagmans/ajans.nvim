@@ -19,7 +19,7 @@ Table of Contents                            *ajans.nvim-table-of-contents*
 
 **ajans.nvim** is a simplified fork of sidekick.nvim focused on local AI CLI
 workflows in Neovim. Start or attach to CLI tools, send editor context, and
-keep sessions alive with tmux or Herdr.
+keep sessions alive with tmux, Herdr, or Rex.
 
 This file is the in-editor Neovim help reference. Open it with
 `:help ajans.nvim`. The `.txt` extension follows Neovim's standard helpdoc
@@ -33,7 +33,7 @@ FEATURES                                *ajans.nvim-ajans.nvim-features*
   diagnostics, quickfix entries, functions, and classes.
 - Prompt library for common tasks such as explaining code, fixing issues,
   reviews, tests, and documentation.
-- Session persistence with tmux or Herdr.
+- Session persistence with tmux, Herdr, or Rex.
 - Exact-match Herdr agent reuse with strict conflict checks.
 - Screen-aware Agy input and explicit retry after pane delivery failures.
 - Herdr lifecycle integration guidance for Pi and Antigravity.
@@ -46,7 +46,8 @@ REQUIREMENTS                        *ajans.nvim-ajans.nvim-requirements*
 - snacks.nvim for better prompt/tool selection (optional)
 - nvim-treesitter-textobjects main branch for `{function}` and `{class}`
   context variables (optional)
-- tmux, or Herdr >= 0.8.0 on macOS/Linux, for persistent CLI sessions
+- tmux, Herdr >= 0.8.0 on macOS/Linux, or Rex (API revision >= 7, local
+  server only) for persistent CLI sessions
 - AI CLI tools such as Codex, Claude, Copilot, Antigravity, etc. (optional)
 - With tmux: Linux uses ps or /proc for discovery; other Unix systems use ps
   for discovery and optionally lsof for working-directory detection
@@ -95,7 +96,7 @@ Configure with:
           split = { width = 80, height = 20 },
         },
         mux = {
-          backend = "auto", -- or "tmux" / "herdr"
+          backend = "auto", -- or "tmux" / "herdr" / "rex"
           create = "split",
           focus = true,
         },
@@ -111,11 +112,13 @@ Configure with:
 
 AI CLI INTEGRATION            *ajans.nvim-ajans.nvim-ai-cli-integration*
 
-Ajans runs local AI CLI tools through tmux or Herdr. Sessions persist across
-Neovim windows and restarts. Backend `auto` prefers the multiplexer that hosts
-Neovim. It then prefers a running Herdr server, the sole usable backend, and
-tmux as the compatibility fallback. Ajans selects a sole installed Herdr even
-when it is invalid so health can report the cause.
+Ajans runs local AI CLI tools through tmux, Herdr, or Rex. Sessions persist
+across Neovim windows and restarts. Backend `auto` prefers the multiplexer
+that hosts Neovim. It then prefers a running Herdr or Rex server, the sole
+usable backend, and tmux as the compatibility fallback. Ajans selects a sole
+installed Herdr or Rex even when it is invalid so health can report the
+cause. Rex sessions always stay in the Rex app (it has no attachable
+terminal client), so `create = "terminal"` is rejected for that backend.
 
 Ajans opens a lightweight Neovim terminal wrapper when one is necessary. A
 compatible Herdr server remains usable when a restart is recommended. Ajans
@@ -231,10 +234,11 @@ CLI tools not starting? ~
 
 Terminal sessions not persisting? ~
 
-Run `:checkhealth ajans` and install the selected backend. Use tmux or Herdr
->= 0.8.0 on macOS/Linux. Herdr health also validates its owner-only local API
-socket. Set `cli.mux.backend` explicitly if auto-selection chose the wrong
-installed backend.
+Run `:checkhealth ajans` and install the selected backend. Use tmux, Herdr
+>= 0.8.0 on macOS/Linux, or Rex with API revision >= 7. Herdr health also
+validates its owner-only local API socket. Rex health requires a local
+server endpoint. Set `cli.mux.backend` explicitly if auto-selection chose
+the wrong installed backend.
 
 Prompt not delivered? ~
 
