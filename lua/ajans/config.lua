@@ -58,10 +58,11 @@ local defaults = {
     },
     ---@class ajans.cli.Mux
     mux = {
-      -- auto: prefer the usable multiplexer hosting Neovim, then a running Herdr server.
-      -- A sole installed Herdr is selected even when invalid so health can report why.
-      backend = "auto", ---@type "auto"|"tmux"|"herdr"
-      -- terminal: sessions will be attached inside a Neovim terminal
+      -- auto: prefer the usable multiplexer hosting Neovim, then a running Herdr or Rex server.
+      -- A sole installed Herdr or Rex is selected even when invalid so health can report why.
+      backend = "auto", ---@type "auto"|"tmux"|"herdr"|"rex"
+      -- terminal: sessions will be attached inside a Neovim terminal (unsupported by Rex,
+      -- which has no attachable terminal client; Rex sessions always stay in the Rex app)
       -- window: create a tmux window or Herdr tab when hosted by the backend
       -- split: create a split when hosted by the backend
       create = "split", ---@type "terminal"|"window"|"split"
@@ -221,7 +222,7 @@ function M.setup(opts)
     require("ajans.status").setup()
 
     M.validate("cli.win.layout", { "float", "left", "bottom", "top", "right" })
-    M.validate("cli.mux.backend", { "auto", "tmux", "herdr" })
+    M.validate("cli.mux.backend", { "auto", "tmux", "herdr", "rex" })
     M.validate("cli.mux.create", { "terminal", "window", "split" })
   end)
 end

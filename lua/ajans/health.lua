@@ -7,6 +7,25 @@ local ok = vim.health.ok or vim.health.report_ok
 local warn = vim.health.warn or vim.health.report_warn
 local error = vim.health.error or vim.health.report_error
 
+---@param display string
+local function check_process_tools(display)
+  local linux = vim.fn.has("linux") == 1
+  if vim.fn.executable("ps") == 1 then
+    ok("`ps` is installed")
+  elseif linux then
+    ok("`ps` is not installed; using `/proc` for process discovery")
+  else
+    warn(("`ps` is not installed; %s process discovery is unavailable"):format(display))
+  end
+  if not linux then
+    if vim.fn.executable("lsof") == 1 then
+      ok("`lsof` is installed")
+    else
+      warn(("`lsof` is not installed; %s working-directory detection is unavailable"):format(display))
+    end
+  end
+end
+
 function M.check()
   start("Ajans")
 
@@ -81,6 +100,33 @@ function M.check()
     else
       error(message or "Selected terminal multiplexer `herdr` is unavailable")
     end
+  elseif backend == "rex" then
+    local Rex = require("ajans.cli.session.rex")
+    local valid, message, version = Rex.validate()
+    if valid then
+      ok(("Selected terminal multiplexer `rex` %s is available"):format(version or "unknown"))
+      local status, status_err = Rex.server_status()
+      if not status then
+        error("Unable to query the selected Rex server: " .. (status_err or "unknown error"))
+      elseif status.running and not status.local_server then
+        error(
+          "The selected Rex server is remote; Ajans can only drive a local Rex server: " .. tostring(status.endpoint)
+        )
+      elseif status.running and (status.api_revision == nil or status.api_revision < Rex.MIN_API_REVISION) then
+        error(
+          ("The running Rex server reports API revision %s; Ajans requires >= %d; update Rex"):format(
+            tostring(status.api_revision),
+            Rex.MIN_API_REVISION
+          )
+        )
+      elseif status.running then
+        ok("The selected local Rex server is running")
+      else
+        ok("The selected Rex server is stopped and will start when Ajans creates a session")
+      end
+    else
+      error(message or "Selected terminal multiplexer `rex` is unavailable")
+    end
   elseif vim.fn.executable("tmux") == 1 then
     ok("Selected terminal multiplexer `tmux` is installed")
   else
@@ -88,21 +134,9 @@ function M.check()
   end
 
   if backend == "tmux" and vim.fn.has("win32") == 0 then
-    local linux = vim.fn.has("linux") == 1
-    if vim.fn.executable("ps") == 1 then
-      ok("`ps` is installed")
-    elseif linux then
-      ok("`ps` is not installed; using `/proc` for process discovery")
-    else
-      warn("`ps` is not installed; tmux process discovery is unavailable")
-    end
-    if not linux then
-      if vim.fn.executable("lsof") == 1 then
-        ok("`lsof` is installed")
-      else
-        warn("`lsof` is not installed; tmux working-directory detection is unavailable")
-      end
-    end
+    check_process_tools("tmux")
+  elseif backend == "rex" and vim.fn.has("win32") == 0 then
+    check_process_tools("Rex")
   end
 
   start("Ajans AI CLI Tools")

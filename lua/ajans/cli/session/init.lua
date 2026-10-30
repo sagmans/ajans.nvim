@@ -31,6 +31,11 @@ M._attachment_generation = 0
 ---@field herdr_label? string
 ---@field herdr_agent_session? any
 ---@field herdr_placement? "workspace"|"tab"|"split"
+---@field rex_session_id? string
+---@field rex_window_id? string
+---@field rex_block_id? string
+---@field rex_pid? number
+---@field rex_label? string
 
 ---@class ajans.cli.session.CreateOpts
 ---@field tool ajans.cli.Tool|string
@@ -53,6 +58,11 @@ M._attachment_generation = 0
 ---@field herdr_label? string
 ---@field herdr_agent_session? any
 ---@field herdr_placement? "workspace"|"tab"|"split"
+---@field rex_session_id? string
+---@field rex_window_id? string
+---@field rex_block_id? string
+---@field rex_pid? number
+---@field rex_label? string
 ---@field fresh? boolean
 
 ---@alias ajans.cli.session.Opts ajans.cli.session.State|ajans.cli.session.CreateOpts
@@ -144,20 +154,23 @@ function B.sessions()
 end
 
 ---@class ajans.cli.session.ResolveOpts
----@field configured? "auto"|"tmux"|"herdr"
+---@field configured? "auto"|"tmux"|"herdr"|"rex"
 ---@field herdr_host? boolean
 ---@field tmux_host? boolean
----@field installed? {tmux:boolean,herdr:boolean}
+---@field rex_host? boolean
+---@field installed? {tmux:boolean,herdr:boolean,rex:boolean}
 ---@field herdr_running? boolean
 ---@field herdr_usable? boolean
+---@field rex_running? boolean
+---@field rex_usable? boolean
 
 ---@param opts? ajans.cli.session.ResolveOpts
----@return "tmux"|"herdr"
+---@return "tmux"|"herdr"|"rex"
 function M.resolve_backend(opts)
   opts = opts or {}
   local configured = opts.configured or Config.cli.mux.backend or "auto"
-  if configured == "tmux" or configured == "herdr" then
-    return configured --[[@as "tmux"|"herdr"]]
+  if configured == "tmux" or configured == "herdr" or configured == "rex" then
+    return configured --[[@as "tmux"|"herdr"|"rex"]]
   end
 
   local installed = opts.installed
@@ -165,6 +178,7 @@ function M.resolve_backend(opts)
     installed = {
       tmux = vim.fn.executable("tmux") == 1,
       herdr = vim.fn.executable("herdr") == 1,
+      rex = vim.fn.executable("rex") == 1,
     }
   end
   local herdr_host = opts.herdr_host
@@ -175,8 +189,15 @@ function M.resolve_backend(opts)
   if tmux_host == nil then
     tmux_host = vim.env.TMUX ~= nil and vim.env.TMUX ~= ""
   end
-  -- A plain tmux host wins before any Herdr subprocess runs. Nested Herdr hosts
-  -- still retain the documented higher precedence.
+  local rex_host = opts.rex_host
+  if rex_host == nil then
+    rex_host = vim.env.REX_SESSION ~= nil
+      and vim.env.REX_SESSION ~= ""
+      and vim.env.REX_BLOCK ~= nil
+      and vim.env.REX_BLOCK ~= ""
+  end
+  -- A plain tmux host wins before any backend subprocess runs. Nested Herdr
+  -- hosts still retain the documented higher precedence.
   if tmux_host and not herdr_host and installed.tmux then
     return "tmux"
   end
@@ -196,6 +217,18 @@ function M.resolve_backend(opts)
     return "tmux"
   end
 
+  local rex_usable = opts.rex_usable
+  if rex_usable == nil then
+    if opts.installed or opts.rex_running ~= nil then
+      rex_usable = installed.rex
+    else
+      rex_usable = installed.rex and require("ajans.cli.session.rex").is_usable() or false
+    end
+  end
+  if rex_host and rex_usable then
+    return "rex"
+  end
+
   local herdr_running = opts.herdr_running
   if herdr_running == nil then
     herdr_running = herdr_usable and require("ajans.cli.session.herdr").is_server_running() or false
@@ -203,10 +236,22 @@ function M.resolve_backend(opts)
   if herdr_running and herdr_usable then
     return "herdr"
   end
+
+  local rex_running = opts.rex_running
+  if rex_running == nil then
+    rex_running = rex_usable and require("ajans.cli.session.rex").is_server_running() or false
+  end
+  if rex_running and rex_usable then
+    return "rex"
+  end
   if installed.herdr and not installed.tmux then
     -- Select the sole installed backend even when validation failed so health
     -- can report the actionable Herdr version/server error.
     return "herdr"
+  end
+  if installed.rex and not installed.tmux and not installed.herdr then
+    -- Same health rationale as the sole Herdr install above.
+    return "rex"
   end
   return "tmux"
 end
@@ -246,7 +291,7 @@ end
 ---@param name string
 ---@param backend ajans.cli.Session
 function M.register(name, backend)
-  if name ~= "tmux" and name ~= "herdr" then
+  if name ~= "tmux" and name ~= "herdr" and name ~= "rex" then
     return
   end
   setmetatable(backend, B)
@@ -263,6 +308,7 @@ function M.setup()
   Config.tools()
   M.register("tmux", require("ajans.cli.session.tmux"))
   M.register("herdr", require("ajans.cli.session.herdr"))
+  M.register("rex", require("ajans.cli.session.rex"))
   M.backend = M.resolve_backend()
 end
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+* **mux:** add Rex session backend for a local Rex server with API revision `>= 7`. Sessions stay in the Rex app (external splits, windows, or a dedicated Rex session); `cli.mux.create = "terminal"` is rejected for this backend and remote Rex hosts fail closed. Set `cli.mux.backend = "rex"` or let `auto` select it when Rex hosts Neovim
+
 ## [0.3.0](https://github.com/sagmans/ajans.nvim/compare/v0.2.0...v0.3.0) (2026-10-31)
 
 ### Features

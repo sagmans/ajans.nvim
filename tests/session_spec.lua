@@ -155,6 +155,8 @@ describe("session mux", function()
   local original_attached
   local original_tmux
   local original_herdr_env
+  local original_rex_session
+  local original_rex_block
   local original_backend
   local original_exec
   local original_info
@@ -170,6 +172,10 @@ describe("session mux", function()
     original_attached = Session._attached
     original_tmux = vim.env.TMUX
     original_herdr_env = vim.env.HERDR_ENV
+    original_rex_session = vim.env.REX_SESSION
+    original_rex_block = vim.env.REX_BLOCK
+    vim.env.REX_SESSION = nil
+    vim.env.REX_BLOCK = nil
     original_backend = Session.backend
     original_exec = Util.exec
     original_info = Util.info
@@ -191,6 +197,8 @@ describe("session mux", function()
     Session._attached = original_attached
     vim.env.TMUX = original_tmux
     vim.env.HERDR_ENV = original_herdr_env
+    vim.env.REX_SESSION = original_rex_session
+    vim.env.REX_BLOCK = original_rex_block
     Herdr.is_server_running = original_server_running
     Herdr.is_usable = original_is_usable
     Util.exec = original_exec
@@ -287,13 +295,14 @@ describe("session mux", function()
     assert.are.equal("herdr", session.backend)
   end)
 
-  it("registers both supported backends", function()
+  it("registers all supported backends", function()
     Session.register("herdr", {})
+    Session.register("rex", {})
 
-    assert.are.same({ "herdr", "tmux" }, vim.fn.sort(vim.tbl_keys(Session.backends)))
+    assert.are.same({ "herdr", "rex", "tmux" }, vim.fn.sort(vim.tbl_keys(Session.backends)))
   end)
 
-  it("sets up both backends and selects one", function()
+  it("sets up all backends and selects one", function()
     setup_config({ cli = { mux = { backend = "tmux" } } })
     Session.backends = {}
     Session.did_setup = false
@@ -301,7 +310,7 @@ describe("session mux", function()
 
     Session.setup()
 
-    assert.are.same({ "herdr", "tmux" }, vim.fn.sort(vim.tbl_keys(Session.backends)))
+    assert.are.same({ "herdr", "rex", "tmux" }, vim.fn.sort(vim.tbl_keys(Session.backends)))
     assert.are.equal("tmux", Session.selected_backend())
   end)
 
