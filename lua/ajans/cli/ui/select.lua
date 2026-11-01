@@ -93,7 +93,6 @@ function M.format(state, picker)
     else
       ret[#ret + 1] = { Config.ui.icons["terminal_" .. status], status_hl }
     end
-    len = len + 2
 
     -- Keep this for debugging purposes
     -- ret[#ret + 1] = { table.concat(state.session.pids or {}, ",") }

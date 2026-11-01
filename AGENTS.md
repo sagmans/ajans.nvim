@@ -14,13 +14,14 @@ This repository contains `ajans.nvim`, a Neovim plugin that provides an integrat
 
 After cloning, run `scripts/setup-hooks` once. It sets `core.hooksPath=.githooks` for this clone and its worktrees. The hooks run the generic checks first (DCO sign-off, message structure, gitleaks secret scan, signed commits on push), then this repo's checks in `.githooks/<hook>.d/`. They replace pull-request CI.
 
-All checks must pass before a push. Never bypass them with `--no-verify`. The generic files in `.githooks/` and `scripts/setup-hooks` are copies of the dotf template (`templates/githooks/`); change them there, not here.
+Required tools: gitleaks, stylua, and luacheck 1.2.0 (`luarocks install luacheck 1.2.0`; `mise.toml` lists Lua 5.4.8 to host it). All checks must pass before a push. Never bypass them with `--no-verify`. The generic files in `.githooks/` and `scripts/setup-hooks` are copies of the dotf template (`templates/githooks/`); change them there, not here.
 
 ## Everyday Commands
 
 - `./scripts/test` – runs the `mini.test` suite using the Lazy.nvim harness; automatically installs test dependencies. Set `LAZY_OFFLINE=1` when you need to skip the bootstrap download (for fully offline CI).
 - `./scripts/docs` – regenerates marked docs blocks from `lua/ajans/config.lua`, `lua/ajans/cli/init.lua`, and `tests/fixtures/readme.lua`.
 - `stylua lua tests aj` – format Lua source, tests, and bundled tool configs when needed.
+- `./scripts/lint` – run the pinned luacheck (1.2.0, `.luacheckrc`); the hooks run it too, so fix its findings or relax a rule in `.luacheckrc` with a written reason.
 - `selene` – lint Lua files (if selene is installed in the environment).
 - Inspect Neovim help topics from the CLI:
 

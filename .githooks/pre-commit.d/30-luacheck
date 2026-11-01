@@ -1,0 +1,40 @@
+#!/bin/sh
+# Lint the staged Lua with the pinned luacheck (scripts/lint) before commit:
+# dead stores and undefined globals are cheap to fix now and noisy later.
+# It checks the index, not the working tree, so `commit -a`, `commit <paths>`
+# and partly staged files are judged by what is committed, with the staged
+# .luacheckrc. A staged .luacheckrc change re-lints every Lua file, because a
+# tighter rule can break files this commit does not touch.
+set -eu
+top=$(git rev-parse --show-toplevel)
+cd "$top"
+# shellcheck disable=SC1090,SC1091  # path exported by .githooks/lib/run-local.sh
+. "${HOOK_HELPERS:?run from .githooks (scripts/setup-hooks)}"
+
+LUACHECK_CONFIG=.luacheckrc
+LINT=./scripts/lint
+
+if staged_git diff --cached --quiet --diff-filter=ACMR -- "$LUACHECK_CONFIG"; then
+	files=$(staged_git diff --cached --name-only --diff-filter=ACMR -- '*.lua')
+else
+	files=$(staged_git ls-files --cached -- '*.lua')
+fi
+[ -n "$files" ] || exit 0
+if [ -z "$(staged_git ls-files --cached -- "$LUACHECK_CONFIG")" ]; then
+	echo "error: $LUACHECK_CONFIG is not in the index; luacheck would run with defaults" >&2
+	exit 1
+fi
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/ajans-luacheck.XXXXXX")
+# Only the mktemp directory this run created, never a computed parent.
+trap 'case "$tmp" in */ajans-luacheck.*) rm -rf -- "$tmp" ;; esac' EXIT
+# Export the staged blobs with their repo paths. luacheck stays in the repo
+# directory, because a mise shim resolves the luacheck install from the
+# working directory's mise.toml; --config points it at the staged rules.
+# shellcheck disable=SC2086 # file names in this repo contain no whitespace
+staged_git checkout-index --prefix="$tmp/" -- "$LUACHECK_CONFIG" $files
+
+echo "pre-commit: luacheck (staged; paths under $tmp)"
+set --
+for f in $files; do set -- "$@" "$tmp/$f"; done
+"$LINT" --config "$tmp/$LUACHECK_CONFIG" "$@"

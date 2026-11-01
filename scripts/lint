@@ -1,0 +1,28 @@
+#!/bin/sh
+# Run luacheck at the pinned version: scripts/lint [paths...] (default: .).
+# Why: the pre-commit and pre-push hooks and manual runs share this entry
+# point, so they cannot drift. A different luacheck release can add or drop
+# warnings, so an unpinned run would pass or fail the same tree by machine.
+# Extra luacheck options pass through; the pre-commit hook adds --config to
+# lint an export of the index with the staged .luacheckrc.
+set -eu
+
+# Bump on purpose and fix the new findings in the same change.
+LUACHECK_VERSION=1.2.0
+LUACHECK_BIN=luacheck
+INSTALL_HINT="install luacheck $LUACHECK_VERSION: luarocks install luacheck $LUACHECK_VERSION (mise.toml lists lua 5.4.8 to host it)"
+
+if ! command -v "$LUACHECK_BIN" >/dev/null 2>&1; then
+	echo "error: $LUACHECK_BIN not found; $INSTALL_HINT" >&2
+	exit 1
+fi
+# A broken mise shim prints its error and exits non-zero here; fail closed.
+actual=$("$LUACHECK_BIN" --version 2>/dev/null | sed -n '1p') || actual=''
+if [ "$actual" != "Luacheck: $LUACHECK_VERSION" ]; then
+	echo "error: luacheck version mismatch: expected $LUACHECK_VERSION, got ${actual:-missing}; $INSTALL_HINT" >&2
+	exit 1
+fi
+
+[ "$#" -gt 0 ] || set -- .
+# --quiet: list only files with findings, so a passing hook stays short.
+exec "$LUACHECK_BIN" --quiet --codes --no-color "$@"

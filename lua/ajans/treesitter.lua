@@ -144,7 +144,7 @@ function M.get_extmarks(source, opts)
   local parser ---@type vim.treesitter.LanguageTree?
   if lang then
     lang = lang:lower()
-    local ok = false
+    local ok
     ok, parser = pcall(vim.treesitter.get_parser, buf, lang)
     parser = ok and parser or nil
   end

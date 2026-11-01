@@ -1,2 +1,5 @@
 [tools]
-lua = "5.1.5"
+# 5.1.5 comes first, so `lua` stays the LuaJIT-compatible 5.1 that Neovim
+# embeds. 5.4.8 hosts the luacheck rock that scripts/lint pins; its mise shim
+# resolves through this list.
+lua = ["5.1.5", "5.4.8"]

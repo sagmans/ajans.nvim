@@ -31,18 +31,23 @@ There is no push or pull-request CI for checks; they run in the repo's own git h
 
 It sets the local `core.hooksPath=.githooks`. Each hook runs the generic checks first (sign-off, message structure, gitleaks secret scan, signed commits on push), then `.githooks/<hook>.d/`.
 
-Then `pre-commit` runs `stylua --check lua tests` and rejects `dd()` debug calls in staged Lua files, and `pre-push` runs `./scripts/test` and the generated-docs drift check for every pushed commit. All checks must pass before a push; do not bypass them with `--no-verify`. There is no CI workflow: work lands directly on `main`, so the local hooks are the only gate.
+Then `pre-commit` runs `stylua --check lua tests`, rejects `dd()` debug calls in staged Lua files, and runs `./scripts/lint` (luacheck) on the staged Lua files. `pre-push` runs `./scripts/lint`, `./scripts/test` and the generated-docs drift check for every pushed commit.
+
+Required tools: gitleaks, stylua, and luacheck 1.2.0 (`luarocks install luacheck 1.2.0`). `mise.toml` lists Lua 5.4.8 next to 5.1.5 to host luacheck; `./scripts/lint` rejects any other luacheck version. All checks must pass before a push; do not bypass them with `--no-verify`. There is no CI workflow: work lands directly on `main`, so the local hooks are the only gate.
 
 ## Commands
 
 ```bash
 ./scripts/test
 ./scripts/docs
+./scripts/lint
 stylua lua tests aj
 selene
 ```
 
 Notes:
+
+- `./scripts/lint` runs luacheck 1.2.0 with `.luacheckrc`; pass paths to lint only those.
 
 - `./scripts/test` runs the mini.test suite through `tests/minit.lua`.
 - Set `LAZY_OFFLINE=1` when you need to avoid Lazy.nvim bootstrap downloads in offline environments.
