@@ -32,9 +32,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         continue
     fi
 
-    case "$local_ref" in
+    # The destination decides release policy: HEAD and branches can target tags.
+    case "$remote_ref" in
     "$tag_prefix"*)
-        tag_name="${local_ref#"$tag_prefix"}"
+        tag_name="${remote_ref#"$tag_prefix"}"
         # A lightweight tag has no tag object, so it can carry no signature.
         if [ "$(git cat-file -t "$local_sha" 2>/dev/null)" != "tag" ] ||
             ! git verify-tag "$local_sha" >/dev/null 2>&1; then
@@ -44,9 +45,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         ;;
     esac
 
-    # Only commits after the remote default-branch tip are judged (shared
-    # with pushed_shas in lib/helpers.sh). Fail closed: if git cannot list
-    # the commits, reject instead of checking nothing.
+    # Share helpers.sh range selection with repo checks so both judge the same
+    # commits: use a locally available default-branch base, else the old remote tip,
+    # else exclude this remote's tracking refs. Reject an unreadable range rather
+    # than silently checking nothing.
     rev_args=()
     range="$(push_range_args "$local_sha" "$remote_sha" "$remote")"
     while IFS= read -r arg; do
@@ -88,7 +90,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         fi
     done <<< "$shas"
 
-    [ -n "$shas" ] || continue
+    # Existing tips still need an advisory re-audit before a new release ref ships.
     # Scanners judge the tree the remote will hold, so they run at the tip,
     # and repo relaxations are read from it; a tag push names the tag
     # object, which is peeled to its commit.
