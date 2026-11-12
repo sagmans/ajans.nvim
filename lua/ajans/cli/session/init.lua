@@ -164,23 +164,45 @@ end
 ---@field rex_running? boolean
 ---@field rex_usable? boolean
 
----@param opts? ajans.cli.session.ResolveOpts
----@return "tmux"|"herdr"|"rex"
-function M.resolve_backend(opts)
-  opts = opts or {}
-  local configured = opts.configured or Config.cli.mux.backend or "auto"
-  if configured == "tmux" or configured == "herdr" or configured == "rex" then
-    return configured --[[@as "tmux"|"herdr"|"rex"]]
-  end
+--- Backend modules that expose usability and server probes, keyed by backend.
+local PROBED_BACKEND_MODULES = {
+  herdr = "ajans.cli.session.herdr",
+  rex = "ajans.cli.session.rex",
+}
 
-  local installed = opts.installed
-  if not installed then
-    installed = {
+--- Backends that a config value may select explicitly, bypassing detection.
+local EXPLICIT_BACKENDS = { tmux = true, herdr = true, rex = true }
+
+--- Fallback when no backend qualifies, kept for compatibility with tmux-only
+--- setups.
+local DEFAULT_BACKEND = "tmux"
+
+---@class ajans.cli.session.ResolveCtx
+---@field opts ajans.cli.session.ResolveOpts
+---@field installed {tmux:boolean,herdr:boolean,rex:boolean}
+---@field herdr_host boolean
+---@field tmux_host boolean
+---@field rex_host boolean
+---@field usable table<string, boolean> Memoized so a probe subprocess runs once.
+
+--- Detect installed backends lazily so tests can inject a fixed set.
+---@param opts ajans.cli.session.ResolveOpts
+---@return {tmux:boolean,herdr:boolean,rex:boolean}
+local function detect_installed(opts)
+  return opts.installed
+    or {
       tmux = vim.fn.executable("tmux") == 1,
       herdr = vim.fn.executable("herdr") == 1,
       rex = vim.fn.executable("rex") == 1,
     }
-  end
+end
+
+--- Resolve which multiplexer hosts the current Neovim, honoring overrides.
+---@param opts ajans.cli.session.ResolveOpts
+---@return boolean herdr_host
+---@return boolean tmux_host
+---@return boolean rex_host
+local function detect_hosts(opts)
   local herdr_host = opts.herdr_host
   if herdr_host == nil then
     herdr_host = vim.env.HERDR_ENV == "1"
@@ -196,64 +218,144 @@ function M.resolve_backend(opts)
       and vim.env.REX_BLOCK ~= nil
       and vim.env.REX_BLOCK ~= ""
   end
-  -- A plain tmux host wins before any backend subprocess runs. Nested Herdr
-  -- hosts still retain the documented higher precedence.
-  if tmux_host and not herdr_host and installed.tmux then
-    return "tmux"
-  end
+  return herdr_host, tmux_host, rex_host
+end
 
-  local herdr_usable = opts.herdr_usable
-  if herdr_usable == nil then
-    if opts.installed or opts.herdr_running ~= nil then
-      herdr_usable = installed.herdr
+--- Decide whether a probed backend can be used, spawning its probe only when
+--- no override or injected install set makes the answer known.
+---@param ctx ajans.cli.session.ResolveCtx
+---@param name "herdr"|"rex"
+---@return boolean
+local function backend_usable(ctx, name)
+  local cached = ctx.usable[name]
+  if cached ~= nil then
+    return cached
+  end
+  local opts = ctx.opts
+  local usable = opts[name .. "_usable"]
+  if usable == nil then
+    if opts.installed or opts[name .. "_running"] ~= nil then
+      usable = ctx.installed[name]
     else
-      herdr_usable = installed.herdr and require("ajans.cli.session.herdr").is_usable() or false
+      usable = ctx.installed[name] and require(PROBED_BACKEND_MODULES[name]).is_usable() or false
     end
   end
-  if herdr_host and herdr_usable then
-    return "herdr"
-  end
-  if tmux_host and installed.tmux then
-    return "tmux"
-  end
+  ctx.usable[name] = usable
+  return usable
+end
 
-  local rex_usable = opts.rex_usable
-  if rex_usable == nil then
-    if opts.installed or opts.rex_running ~= nil then
-      rex_usable = installed.rex
-    else
-      rex_usable = installed.rex and require("ajans.cli.session.rex").is_usable() or false
-    end
+--- Decide whether a usable backend's server is running; unusable backends are
+--- never probed so they cannot spawn a subprocess.
+---@param ctx ajans.cli.session.ResolveCtx
+---@param name "herdr"|"rex"
+---@return boolean
+local function backend_running(ctx, name)
+  local running = ctx.opts[name .. "_running"]
+  if running ~= nil then
+    return running
   end
-  if rex_host and rex_usable then
-    return "rex"
-  end
+  return backend_usable(ctx, name) and require(PROBED_BACKEND_MODULES[name]).is_server_running() or false
+end
 
-  local herdr_running = opts.herdr_running
-  if herdr_running == nil then
-    herdr_running = herdr_usable and require("ajans.cli.session.herdr").is_server_running() or false
-  end
-  if herdr_running and herdr_usable then
-    return "herdr"
-  end
-
-  local rex_running = opts.rex_running
-  if rex_running == nil then
-    rex_running = rex_usable and require("ajans.cli.session.rex").is_server_running() or false
-  end
-  if rex_running and rex_usable then
-    return "rex"
-  end
+--- Pick the sole installed backend when nothing else qualified, so health can
+--- report that backend's actionable error instead of a silent tmux fallback.
+---@param ctx ajans.cli.session.ResolveCtx
+---@return "herdr"|"rex"|nil
+local function sole_installed_backend(ctx)
+  local installed = ctx.installed
   if installed.herdr and not installed.tmux then
-    -- Select the sole installed backend even when validation failed so health
-    -- can report the actionable Herdr version/server error.
     return "herdr"
   end
   if installed.rex and not installed.tmux and not installed.herdr then
-    -- Same health rationale as the sole Herdr install above.
     return "rex"
   end
-  return "tmux"
+end
+
+--- A plain tmux host wins before any backend subprocess runs. Nested Herdr
+--- hosts still retain the documented higher precedence.
+---@param ctx ajans.cli.session.ResolveCtx
+---@return "tmux"|"herdr"|"rex"|nil
+local function plain_tmux_host(ctx)
+  if ctx.tmux_host and not ctx.herdr_host and ctx.installed.tmux then
+    return "tmux"
+  end
+end
+
+---@param ctx ajans.cli.session.ResolveCtx
+---@return "tmux"|"herdr"|"rex"|nil
+local function herdr_host_backend(ctx)
+  -- Probe before testing the host flag so the probe order stays stable.
+  local usable = backend_usable(ctx, "herdr")
+  if ctx.herdr_host and usable then
+    return "herdr"
+  end
+end
+
+---@param ctx ajans.cli.session.ResolveCtx
+---@return "tmux"|"herdr"|"rex"|nil
+local function tmux_host_backend(ctx)
+  if ctx.tmux_host and ctx.installed.tmux then
+    return "tmux"
+  end
+end
+
+---@param ctx ajans.cli.session.ResolveCtx
+---@return "tmux"|"herdr"|"rex"|nil
+local function rex_host_backend(ctx)
+  local usable = backend_usable(ctx, "rex")
+  if ctx.rex_host and usable then
+    return "rex"
+  end
+end
+
+--- Build a stage that selects a backend whose server is already running.
+---@param name "herdr"|"rex"
+---@return fun(ctx:ajans.cli.session.ResolveCtx):string?
+local function running_backend(name)
+  return function(ctx)
+    if backend_usable(ctx, name) and backend_running(ctx, name) then
+      return name
+    end
+  end
+end
+
+--- Detection stages in documented precedence order; the first hit wins.
+local RESOLVE_STAGES = {
+  plain_tmux_host,
+  herdr_host_backend,
+  tmux_host_backend,
+  rex_host_backend,
+  running_backend("herdr"),
+  running_backend("rex"),
+  sole_installed_backend,
+}
+
+---@param opts? ajans.cli.session.ResolveOpts
+---@return "tmux"|"herdr"|"rex"
+function M.resolve_backend(opts)
+  opts = opts or {}
+  local configured = opts.configured or Config.cli.mux.backend or "auto"
+  if EXPLICIT_BACKENDS[configured] then
+    return configured --[[@as "tmux"|"herdr"|"rex"]]
+  end
+
+  local herdr_host, tmux_host, rex_host = detect_hosts(opts)
+  ---@type ajans.cli.session.ResolveCtx
+  local ctx = {
+    opts = opts,
+    installed = detect_installed(opts),
+    herdr_host = herdr_host,
+    tmux_host = tmux_host,
+    rex_host = rex_host,
+    usable = {},
+  }
+  for _, stage in ipairs(RESOLVE_STAGES) do
+    local backend = stage(ctx)
+    if backend then
+      return backend
+    end
+  end
+  return DEFAULT_BACKEND
 end
 
 ---@param state ajans.cli.session.Opts

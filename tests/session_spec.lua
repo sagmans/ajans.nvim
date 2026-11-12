@@ -148,6 +148,68 @@ local function assert_cmd_pair(cmd, key, value)
   error(("expected command to contain %s %s, got %s"):format(key, value, table.concat(cmd, " ")))
 end
 
+--- Backend auto-detection scenarios shared by the resolve_backend specs.
+local RESOLVE_CASES = {
+  {
+    name = "explicit tmux",
+    configured = "tmux",
+    herdr_env = true,
+    tmux_env = true,
+    tmux = true,
+    herdr = true,
+    running = true,
+    expected = "tmux",
+  },
+  { name = "explicit Herdr", configured = "herdr", tmux = true, expected = "herdr" },
+  {
+    name = "Herdr host",
+    configured = "auto",
+    herdr_env = true,
+    tmux_env = true,
+    tmux = true,
+    herdr = true,
+    running = true,
+    expected = "herdr",
+  },
+  {
+    name = "tmux host",
+    configured = "auto",
+    tmux_env = true,
+    tmux = true,
+    herdr = true,
+    running = true,
+    expected = "tmux",
+  },
+  {
+    name = "running Herdr server",
+    configured = "auto",
+    tmux = true,
+    herdr = true,
+    running = true,
+    expected = "herdr",
+  },
+  { name = "sole Herdr install", configured = "auto", herdr = true, expected = "herdr" },
+  { name = "sole tmux install", configured = "auto", tmux = true, expected = "tmux" },
+  {
+    name = "running but unusable Herdr server",
+    configured = "auto",
+    tmux = true,
+    herdr = true,
+    running = true,
+    usable = false,
+    expected = "tmux",
+  },
+  {
+    name = "sole unusable Herdr install",
+    configured = "auto",
+    herdr = true,
+    usable = false,
+    expected = "herdr",
+  },
+  { name = "both installed compatibility tie", configured = "auto", tmux = true, herdr = true, expected = "tmux" },
+  { name = "neither installed compatibility fallback", configured = "auto", expected = "tmux" },
+}
+
 describe("session mux", function()
   local original_backends
   local original_did_setup
@@ -207,66 +269,7 @@ describe("session mux", function()
     pcall(vim.api.nvim_del_user_command, "Ajans")
   end)
 
-  for _, case in ipairs({
-    {
-      name = "explicit tmux",
-      configured = "tmux",
-      herdr_env = true,
-      tmux_env = true,
-      tmux = true,
-      herdr = true,
-      running = true,
-      expected = "tmux",
-    },
-    { name = "explicit Herdr", configured = "herdr", tmux = true, expected = "herdr" },
-    {
-      name = "Herdr host",
-      configured = "auto",
-      herdr_env = true,
-      tmux_env = true,
-      tmux = true,
-      herdr = true,
-      running = true,
-      expected = "herdr",
-    },
-    {
-      name = "tmux host",
-      configured = "auto",
-      tmux_env = true,
-      tmux = true,
-      herdr = true,
-      running = true,
-      expected = "tmux",
-    },
-    {
-      name = "running Herdr server",
-      configured = "auto",
-      tmux = true,
-      herdr = true,
-      running = true,
-      expected = "herdr",
-    },
-    { name = "sole Herdr install", configured = "auto", herdr = true, expected = "herdr" },
-    { name = "sole tmux install", configured = "auto", tmux = true, expected = "tmux" },
-    {
-      name = "running but unusable Herdr server",
-      configured = "auto",
-      tmux = true,
-      herdr = true,
-      running = true,
-      usable = false,
-      expected = "tmux",
-    },
-    {
-      name = "sole unusable Herdr install",
-      configured = "auto",
-      herdr = true,
-      usable = false,
-      expected = "herdr",
-    },
-    { name = "both installed compatibility tie", configured = "auto", tmux = true, herdr = true, expected = "tmux" },
-    { name = "neither installed compatibility fallback", configured = "auto", expected = "tmux" },
-  }) do
+  for _, case in ipairs(RESOLVE_CASES) do
     it("resolves " .. case.name, function()
       local backend = Session.resolve_backend({
         configured = case.configured,

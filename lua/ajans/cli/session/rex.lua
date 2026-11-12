@@ -692,63 +692,127 @@ local function foreground_proc(foreground)
   }
 end
 
+--- Tell whether a process sits in the tty foreground group, tolerating
+--- inventories that lack pgid by falling back to the reported pid.
+---@param proc ajans.cli.Proc
+---@param foreground_group_id number
+---@param foreground_pid number
+---@return boolean
+local function in_foreground_group(proc, foreground_group_id, foreground_pid)
+  local in_group = (proc.pgid ~= nil and proc.pgid == foreground_group_id)
+    or (proc.pgid == nil and proc.pid == foreground_pid)
+  return in_group and (not proc.tpgid or proc.tpgid <= 0 or proc.tpgid == proc.pgid)
+end
+
+--- Tell whether a process is exactly the one already authorized for input, so
+--- the walk can stop instead of settling for a first-match fallback.
+---@param self ajans.cli.muxer.Rex
+---@param proc ajans.cli.Proc
+---@param identity table
+---@return boolean
+local function is_authorized_process(self, proc, identity)
+  if self._authorized_process then
+    return Procs.same_identity(self._authorized_process, identity)
+  end
+  return self._authorized_pid == proc.pid
+end
+
+--- Find the tool among the child's foreground-group members. An already
+--- authorized process wins; otherwise the first match is used so a fresh
+--- session can be authorized once.
+---@param self ajans.cli.muxer.Rex
+---@param procs ajans.cli.Procs
+---@param child_pid number
+---@param foreground_group_id number
+---@param foreground_pid number
+---@return number? matched_pid
+---@return table? matched_process
+local function find_foreground_tool(self, procs, child_pid, foreground_group_id, foreground_pid)
+  local matched_pid
+  local matched_process
+  procs:walk(child_pid, function(proc)
+    if not in_foreground_group(proc, foreground_group_id, foreground_pid) or not self.tool:is_proc(proc) then
+      return nil
+    end
+    local identity = Procs.identity(proc)
+    if is_authorized_process(self, proc, identity) then
+      matched_pid = proc.pid
+      matched_process = identity
+      return true
+    end
+    if not self._authorized_pid then
+      matched_pid = matched_pid or proc.pid
+      matched_process = matched_process or identity
+    end
+  end)
+  return matched_pid, matched_process
+end
+
+--- Trust the server-reported foreground when the local process inventory is
+--- incomplete, because ps can miss a just-started tool.
+---@param self ajans.cli.muxer.Rex
+---@param foreground table
+---@param foreground_pid number
+---@return number? matched_pid
+---@return table? matched_process
+local function match_reported_foreground(self, foreground, foreground_pid)
+  if not self.tool:is_proc(foreground_proc(foreground)) then
+    return nil
+  end
+  local identity = { pid = foreground_pid, runtime_executable = foreground.path }
+  local same = self._authorized_process and Procs.same_identity(self._authorized_process, identity)
+  if same or not self._authorized_pid or self._authorized_pid == foreground_pid then
+    return foreground_pid, identity
+  end
+end
+
+--- Extract the reported child and foreground pids, accepting only a report
+--- that belongs to this session's own Rex block.
 ---@param self ajans.cli.muxer.Rex
 ---@param info table?
----@param procs ajans.cli.Procs
----@return boolean
-local function accepts_process(self, info, procs)
+---@return number? child_pid
+---@return table? foreground
+---@return number? foreground_pid
+local function reported_pids(self, info)
   local child = info and as_table(info.child)
   local child_pid = child and tonumber(child.pid)
   local foreground = info and as_table(info.foreground)
   local foreground_pid = foreground and tonumber(foreground.pid)
   if not child_pid or child_pid ~= self.rex_pid or not foreground_pid then
+    return nil
+  end
+  return child_pid, foreground, foreground_pid
+end
+
+--- Rex reports the tty foreground process-group leader, which is the
+--- launching shell when the tool runs in the shell's own group, so the
+--- tool is matched among the leader's foreground-group members rather
+--- than by equality with the reported pid.
+---@param procs ajans.cli.Procs
+---@param foreground_pid number
+---@return number
+local function foreground_group_of(procs, foreground_pid)
+  local leader = procs:get(foreground_pid)
+  return leader and (leader.tpgid or leader.pgid) or foreground_pid
+end
+
+--- Authorize automated input only for the tool still in this block's
+--- foreground group, so keystrokes never reach a process the user started later.
+---@param self ajans.cli.muxer.Rex
+---@param info table?
+---@param procs ajans.cli.Procs
+---@return boolean
+local function accepts_process(self, info, procs)
+  local child_pid, foreground, foreground_pid = reported_pids(self, info)
+  if not child_pid or not foreground_pid then
     return false
   end
-  -- Rex reports the tty foreground process-group leader, which is the
-  -- launching shell when the tool runs in the shell's own group, so the
-  -- tool is matched among the leader's foreground-group members rather
-  -- than by equality with the reported pid.
-  local leader = procs:get(foreground_pid)
-  local foreground_group_id = leader and (leader.tpgid or leader.pgid) or foreground_pid
-  local matched_pid
-  local matched_process
-  procs:walk(child_pid, function(proc)
-    local in_foreground_group = (proc.pgid ~= nil and proc.pgid == foreground_group_id)
-      or (proc.pgid == nil and proc.pid == foreground_pid)
-    local foreground_group = in_foreground_group and (not proc.tpgid or proc.tpgid <= 0 or proc.tpgid == proc.pgid)
-    if foreground_group and self.tool:is_proc(proc) then
-      local identity = Procs.identity(proc)
-      if self._authorized_process and Procs.same_identity(self._authorized_process, identity) then
-        matched_pid = proc.pid
-        matched_process = identity
-        return true
-      end
-      if self._authorized_pid == proc.pid and not self._authorized_process then
-        matched_pid = proc.pid
-        matched_process = identity
-        return true
-      end
-      if not self._authorized_pid then
-        matched_pid = matched_pid or proc.pid
-        matched_process = matched_process or identity
-      end
-    end
-  end)
+  local foreground_group_id = foreground_group_of(procs, foreground_pid)
+  local matched_pid, matched_process = find_foreground_tool(self, procs, child_pid, foreground_group_id, foreground_pid)
   if not matched_pid and foreground and not procs:is_complete() then
-    -- The local inventory is best-effort (ps can miss a just-started tool);
-    -- the server-reported foreground identity is authoritative for its pid.
-    local proc = foreground_proc(foreground)
-    if self.tool:is_proc(proc) then
-      local identity = { pid = foreground_pid, runtime_executable = foreground.path }
-      if self._authorized_process and Procs.same_identity(self._authorized_process, identity) then
-        matched_pid = foreground_pid
-        matched_process = identity
-      elseif not self._authorized_pid or self._authorized_pid == foreground_pid then
-        matched_pid = foreground_pid
-        matched_process = identity
-      end
-    end
+    matched_pid, matched_process = match_reported_foreground(self, foreground, foreground_pid)
   end
+  -- A changed or not-yet-ready tool must not keep input authorization.
   if self._authorized_pid and matched_pid ~= self._authorized_pid then
     return false
   end
@@ -795,6 +859,103 @@ function M:authorize_automated_input(callback)
   check()
 end
 
+--- Build the session state for a tool found inside a Rex terminal block.
+---@param tool ajans.cli.Tool
+---@param session_id string
+---@param block table
+---@param child_pid number
+---@param cwd string
+---@return ajans.cli.session.RexState
+local function block_state(tool, session_id, block, child_pid, cwd)
+  return {
+    id = ("rex %s"):format(block.block_id),
+    identity = block.block_id,
+    cwd = cwd,
+    tool = tool,
+    rex_session_id = session_id,
+    rex_window_id = block.window_id,
+    rex_block_id = block.block_id,
+    rex_pid = child_pid,
+    rex_label = block.label,
+    mux_session = session_id,
+    pids = Procs.pids(child_pid),
+  }
+end
+
+--- Collect the first known tool running under a block's shell. Stops at the
+--- first tool match so one block yields at most one session.
+---@param ret ajans.cli.session.RexState[]
+---@param tools table<string, ajans.cli.Tool>
+---@param procs ajans.cli.Procs
+---@param session_id string
+---@param block table
+---@param info table
+---@param child_pid number
+local function collect_block_sessions(ret, tools, procs, session_id, block, info, child_pid)
+  local foreground = as_table(info.foreground)
+  procs:walk(child_pid, function(proc)
+    for _, tool in pairs(tools) do
+      if tool:is_proc(proc) then
+        local cwd = proc.cwd or (foreground and foreground.cwd)
+        if cwd then
+          ret[#ret + 1] = block_state(tool, session_id, block, child_pid, cwd)
+        end
+        return true
+      end
+    end
+  end)
+end
+
+--- Inspect one terminal block. Returns false when the process lookup failed so
+--- the caller can mark discovery as non-authoritative.
+---@param ret ajans.cli.session.RexState[]
+---@param tools table<string, ajans.cli.Tool>
+---@param procs ajans.cli.Procs
+---@param session_id string
+---@param block table
+---@return boolean complete
+local function scan_block(ret, tools, procs, session_id, block)
+  local info = block_call(session_id, block.block_id, "process", {
+    notify = false,
+    system = { timeout = M.PROCESS_TIMEOUT },
+  })
+  local child = info and as_table(info.child)
+  local child_pid = child and tonumber(child.pid)
+  if not info or not child_pid then
+    return false
+  end
+  -- Blocks whose command already exited cannot host a live tool.
+  if info.last_exit == nil or info.last_exit == vim.NIL then
+    collect_block_sessions(ret, tools, procs, session_id, block, info, child_pid)
+  end
+  return true
+end
+
+--- Scan every block of one Rex session until the shared deadline passes.
+---@param ret ajans.cli.session.RexState[]
+---@param tools table<string, ajans.cli.Tool>
+---@param procs ajans.cli.Procs
+---@param session_id any Raw id from Rex JSON; checked before use.
+---@param deadline number vim.uv.now() value after which the scan stops.
+---@return boolean complete
+local function scan_session(ret, tools, procs, session_id, deadline)
+  local blocks = type(session_id) == "string"
+    and M.request({ "block", "ls", "-s", session_id, "--json" }, { notify = false })
+  if not blocks or type(blocks.blocks) ~= "table" then
+    return false
+  end
+  local complete = true
+  for _, block in ipairs(blocks.blocks) do
+    if vim.uv.now() >= deadline then
+      return false
+    end
+    if block.creator_name == TERMINAL_CREATOR and type(block.block_id) == "string" then
+      complete = scan_block(ret, tools, procs, session_id, block) and complete
+    end
+  end
+  return complete
+end
+
 ---@return ajans.cli.session.RexState[], boolean
 function M.sessions()
   local ret = {} ---@type ajans.cli.session.RexState[]
@@ -809,55 +970,7 @@ function M.sessions()
   local deadline = vim.uv.now() + M.DISCOVERY_TIMEOUT
 
   for _, session in ipairs(listing.sessions) do
-    local session_id = session.session_id
-    local blocks = type(session_id) == "string"
-      and M.request({ "block", "ls", "-s", session_id, "--json" }, { notify = false })
-    if not blocks or type(blocks.blocks) ~= "table" then
-      complete = false
-    else
-      for _, block in ipairs(blocks.blocks) do
-        if vim.uv.now() >= deadline then
-          complete = false
-          break
-        end
-        if block.creator_name == TERMINAL_CREATOR and type(block.block_id) == "string" then
-          local info = block_call(session_id, block.block_id, "process", {
-            notify = false,
-            system = { timeout = M.PROCESS_TIMEOUT },
-          })
-          local child = info and as_table(info.child)
-          local child_pid = child and tonumber(child.pid)
-          if not info or not child_pid then
-            complete = false
-          elseif info.last_exit == nil or info.last_exit == vim.NIL then
-            local foreground = as_table(info.foreground)
-            procs:walk(child_pid, function(proc)
-              for _, tool in pairs(tools) do
-                if tool:is_proc(proc) then
-                  local cwd = proc.cwd or (foreground and foreground.cwd)
-                  if cwd then
-                    ret[#ret + 1] = {
-                      id = ("rex %s"):format(block.block_id),
-                      identity = block.block_id,
-                      cwd = cwd,
-                      tool = tool,
-                      rex_session_id = session_id,
-                      rex_window_id = block.window_id,
-                      rex_block_id = block.block_id,
-                      rex_pid = child_pid,
-                      rex_label = block.label,
-                      mux_session = session_id,
-                      pids = Procs.pids(child_pid),
-                    }
-                  end
-                  return true
-                end
-              end
-            end)
-          end
-        end
-      end
-    end
+    complete = scan_session(ret, tools, procs, session.session_id, deadline) and complete
   end
 
   local procs_complete = not procs.is_complete or procs:is_complete()
