@@ -24,11 +24,12 @@ generic checks first (DCO sign-off, message structure, gitleaks secret scan,
 signed commits on push), then this repo's checks in `.githooks/<hook>.d/`. They
 replace pull-request CI.
 
-Required tools: gitleaks, stylua, and luacheck 1.2.0
-(`luarocks install luacheck 1.2.0`; `mise.toml` lists Lua 5.4.8 to host it). All
-checks must pass before a push. Never bypass them with `--no-verify`. The
-generic files in `.githooks/` and `scripts/setup-hooks` are copies of the dotf
-template (`templates/githooks/`); change them there, not here.
+Required tools: gitleaks, luacheck 1.2.0 (`luarocks install luacheck 1.2.0`),
+and the tools pinned in `mise.toml` (`lua`, `neovim`, `stylua`, `shellcheck`,
+`shfmt`). All checks must pass before a push. Never bypass them with
+`--no-verify`. The generic files in `.githooks/` and `scripts/setup-hooks` are
+copies of the dotf template (`templates/githooks/`); change them there, not
+here.
 
 Commit messages follow `.githooks/GIT_CONVENTION.md`, which `commit-msg` and
 `pre-push` enforce. The generic checks need gitleaks, osv-scanner, semgrep,
@@ -44,9 +45,13 @@ workflow files. A missing tool blocks the hook.
   `lua/ajans/cli/init.lua`, and `tests/fixtures/readme.lua`.
 - `stylua lua tests aj` – format Lua source, tests, and bundled tool configs
   when needed.
-- `./scripts/lint` – run the pinned luacheck (1.2.0, `.luacheckrc`); the hooks
+- `./scripts/check-stylua` – run the `mise.toml`-pinned stylua format check
+  across all Lua files; pre-commit and pre-push hooks enforce it too.
+- `./scripts/lint` – run the pinned luacheck (`1.2.0`, `.luacheckrc`); the hooks
   run it too, so fix its findings or relax a rule in `.luacheckrc` with a
   written reason.
+- `./scripts/lint-shell` – run `mise.toml`-pinned shellcheck and shfmt on
+  repo-owned shell scripts; pre-commit and pre-push hooks enforce it too.
 - `selene` – lint Lua files (if selene is installed in the environment).
 - Inspect Neovim help topics from the CLI:
 

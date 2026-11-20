@@ -1,0 +1,24 @@
+#!/bin/sh
+# Lint and format-check staged repo-owned shell scripts at pinned versions
+# against the staged index and staged .editorconfig before commit.
+set -eu
+top=$(git rev-parse --show-toplevel)
+cd "$top"
+# shellcheck disable=SC1090,SC1091  # path exported by .githooks/lib/run-local.sh
+. "${HOOK_HELPERS:?run from .githooks (scripts/setup-hooks)}"
+
+case "$(staged_git ls-files -s -- scripts/lib/staged-check.sh)" in
+100644\ * | 100755\ *) ;;
+*)
+  echo "error: scripts/lib/staged-check.sh must be a tracked regular file in the index" >&2
+  exit 1
+  ;;
+esac
+
+sc_lib=$(mktemp "${TMPDIR:-/tmp}/ajans-staged-lib.XXXXXX")
+trap 'case "${sc_lib:-}" in */ajans-staged-lib.*) rm -f -- "$sc_lib" ;; esac' EXIT INT TERM HUP
+staged_git show :scripts/lib/staged-check.sh >"$sc_lib"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/staged-check.sh
+. "$sc_lib"
+
+run_staged_check "shellcheck + shfmt" .editorconfig scripts/lint-shell -- --from-runner

@@ -3,3 +3,7 @@
 # embeds. 5.4.8 hosts the luacheck rock that scripts/lint pins; its mise shim
 # resolves through this list.
 lua = ["5.1.5", "5.4.8"]
+neovim = "0.12.5"
+shellcheck = "0.11.0"
+shfmt = "3.14.1"
+stylua = "2.6.0"

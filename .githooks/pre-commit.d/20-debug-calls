@@ -12,6 +12,6 @@ files=$(staged_git diff --cached --name-only --diff-filter=ACMR -- 'lua/*.lua' '
 echo "pre-commit: debug-call scan"
 # shellcheck disable=SC2086 # file names in this repo contain no whitespace
 if staged_git grep --cached -n -P "$DEBUG_CALL_RE" -- $files; then
-	echo "error: debug dd() calls found in staged files" >&2
-	exit 1
+  echo "error: debug dd() calls found in staged files" >&2
+  exit 1
 fi

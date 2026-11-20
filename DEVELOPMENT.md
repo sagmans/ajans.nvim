@@ -23,41 +23,61 @@ Contributor notes for ajans.nvim.
 
 ## Git hooks
 
-There is no push or pull-request CI for checks; they run in the repo's own git hooks. Once per clone:
+There is no push or pull-request CI for checks; they run in the repo's own git
+hooks. Once per clone:
 
 ```bash
 ./scripts/setup-hooks
 ```
 
-It sets the local `core.hooksPath=.githooks`. Each hook runs the generic checks first (sign-off, message structure, gitleaks secret scan, signed commits on push), then `.githooks/<hook>.d/`.
+It sets the local `core.hooksPath=.githooks`. Each hook runs the generic checks
+first (sign-off, message structure, gitleaks secret scan, signed commits on
+push), then `.githooks/<hook>.d/`.
 
-Then `pre-commit` runs `stylua --check lua tests`, rejects `dd()` debug calls in staged Lua files, and runs `./scripts/lint` (luacheck) on the staged Lua files. `pre-push` runs `./scripts/lint`, `./scripts/test` and the generated-docs drift check for every pushed commit.
+Then `pre-commit` runs `./scripts/check-stylua` on staged Lua files (`lua/`,
+`tests/`, `aj/`), rejects `dd()` debug calls in staged Lua files, runs
+`./scripts/lint` (luacheck) on staged Lua files, and runs `./scripts/lint-shell`
+(shellcheck + shfmt) on staged repo-owned shell scripts. `pre-push` runs
+`./scripts/check-stylua`, `./scripts/lint`, `./scripts/lint-shell`,
+`./scripts/test`, and the generated-docs drift check for every pushed commit.
 
-Required tools: gitleaks, stylua, and luacheck 1.2.0 (`luarocks install luacheck 1.2.0`). `mise.toml` lists Lua 5.4.8 next to 5.1.5 to host luacheck; `./scripts/lint` rejects any other luacheck version. All checks must pass before a push; do not bypass them with `--no-verify`. There is no CI workflow: work lands directly on `main`, so the local hooks are the only gate.
+Required tools: gitleaks, luacheck 1.2.0 (`luarocks install luacheck 1.2.0`),
+and the tools pinned in `mise.toml` (`lua`, `neovim`, `stylua`, `shellcheck`,
+`shfmt`). `./scripts/lint` rejects any other luacheck version, and
+`./scripts/check-stylua` / `./scripts/lint-shell` enforce the `mise.toml` pins.
+All checks must pass before a push; do not bypass them with `--no-verify`. There
+is no CI workflow: work lands directly on `main`, so the local hooks are the
+only gate.
 
 ## Commands
 
 ```bash
 ./scripts/test
 ./scripts/docs
+./scripts/check-stylua
 ./scripts/lint
+./scripts/lint-shell
 stylua lua tests aj
 selene
 ```
 
 Notes:
 
-- `./scripts/lint` runs luacheck 1.2.0 with `.luacheckrc`; pass paths to lint only those.
-
+- `./scripts/lint` runs luacheck 1.2.0 with `.luacheckrc`; pass paths to lint
+  only those.
 - `./scripts/test` runs the mini.test suite through `tests/minit.lua`.
-- Set `LAZY_OFFLINE=1` when you need to avoid Lazy.nvim bootstrap downloads in offline environments.
-- `./scripts/docs` regenerates marked blocks in `CONFIG.md`, `KEYMAPS.md`, and `USAGE.md`.
+- Set `LAZY_OFFLINE=1` when you need to avoid Lazy.nvim bootstrap downloads in
+  offline environments.
+- `./scripts/docs` regenerates marked blocks in `CONFIG.md`, `KEYMAPS.md`, and
+  `USAGE.md`.
 
 ## Generated docs
 
-Do not edit generated blocks directly. Update source, then run `./scripts/docs`. The pre-push hook reruns this command and rejects drift.
+Do not edit generated blocks directly. Update source, then run `./scripts/docs`.
+The pre-push hook reruns this command and rejects drift.
 
-`doc/ajans.nvim.txt` remains pull-request-reviewed rather than generated. Keep it synchronized when README user-facing behavior changes.
+`doc/ajans.nvim.txt` remains pull-request-reviewed rather than generated. Keep
+it synchronized when README user-facing behavior changes.
 
 `lua/ajans/docs.lua` maps generated snippets to split docs with `Docs.save(...)`:
 
@@ -75,16 +95,26 @@ Do not edit generated blocks directly. Update source, then run `./scripts/docs`.
 
 ## Session backend contract
 
-All backend adapters (tmux, Herdr, Rex) implement `start`, `attach`, `detach`, `sessions`, `send`, `submit`, `dump`, and `is_running`. Automated delivery also uses `accepts_automated_input` and `authorize_automated_input`. Add behavior to the table-driven contract in `tests/mux_parity_spec.lua` when this interface changes.
+All backend adapters (tmux, Herdr, Rex) implement `start`, `attach`, `detach`,
+`sessions`, `send`, `submit`, `dump`, and `is_running`. Automated delivery also
+uses `accepts_automated_input` and `authorize_automated_input`. Add behavior to
+the table-driven contract in `tests/mux_parity_spec.lua` when this interface
+changes.
 
-Herdr and Rex command tests must mock `_run` and `_run_many`. The ordinary test harness must not inspect or mutate a developer's live Herdr or Rex server. Real lifecycle harnesses remain deferred to [Herdr issue #11](https://github.com/sagmans/ajans.nvim/issues/11) and [tmux issue #10](https://github.com/sagmans/ajans.nvim/issues/10). These harnesses must use isolated temporary namespaces and recorded-ID cleanup only.
+Herdr and Rex command tests must mock `_run` and `_run_many`. The ordinary test
+harness must not inspect or mutate a developer's live Herdr or Rex server. Real
+lifecycle harnesses remain deferred to
+[Herdr issue #11](https://github.com/sagmans/ajans.nvim/issues/11) and
+[tmux issue #10](https://github.com/sagmans/ajans.nvim/issues/10). These
+harnesses must use isolated temporary namespaces and recorded-ID cleanup only.
 
 ## Adding a CLI tool
 
 1. Add `aj/cli/{name}.lua`.
 2. Add the tool key under `cli.tools` in `lua/ajans/config.lua`.
 3. Include at least `cmd`, `is_proc`, and `url` when possible.
-4. Add formatter, keymap, focus, scroll, or `mux_ready` options only when the tool needs them.
+4. Add formatter, keymap, focus, scroll, or `mux_ready` options only when the
+   tool needs them.
 5. Update tests if tool loading or formatting behavior changes.
 6. Run `./scripts/docs` and `./scripts/test`.
 
@@ -93,43 +123,55 @@ Herdr and Rex command tests must mock `_run` and `_run_many`. The ordinary test 
 1. Add the default in `lua/ajans/config.lua` with Lua annotations.
 2. Add validation in `config.setup` when values are constrained.
 3. Add/adjust tests in `tests/config_spec.lua`.
-4. Document behavior in `CONFIG.md` outside generated block if users need guidance.
+4. Document behavior in `CONFIG.md` outside generated block if users need
+   guidance.
 5. Run `./scripts/docs`.
 
 ## Adding context variables
 
-1. Add provider in `lua/ajans/cli/context/init.lua` or via config docs if user-defined only.
+1. Add provider in `lua/ajans/cli/context/init.lua` or via config docs if
+   user-defined only.
 2. Return `nil`/`false` when context is unavailable.
 3. Add tests in `tests/context_spec.lua` or related specs.
 4. Document user-facing behavior in `USAGE.md`.
 
 ## Adding keymaps
 
-1. Add default terminal mappings in `lua/ajans/config.lua` only when broadly useful.
-2. Implement action in `lua/ajans/cli/actions.lua` if it is not a terminal method or Ex command.
+1. Add default terminal mappings in `lua/ajans/config.lua` only when broadly
+   useful.
+2. Implement action in `lua/ajans/cli/actions.lua` if it is not a terminal
+   method or Ex command.
 3. Cover behavior in terminal/keymap tests.
 4. Update `KEYMAPS.md`.
 
 ## Release process
 
-Ajans releases are prepared and published manually so release metadata remains reviewable and Git tags remain signed.
+Ajans releases are prepared and published manually so release metadata remains
+reviewable and Git tags remain signed.
 
-1. Open a release pull request that promotes `Unreleased` notes into a dated version section.
+1. Open a release pull request that promotes `Unreleased` notes into a dated
+   version section.
 2. Merge only after required checks pass and review feedback is resolved.
 3. Create a signed annotated `vX.Y.Z` tag from the merged `main` commit.
-4. Push the tag, then publish a GitHub Release from the matching changelog section.
-5. Verify the remote tag signature, release target, and a clean synchronized `main` branch.
+4. Push the tag, then publish a GitHub Release from the matching changelog
+   section.
+5. Verify the remote tag signature, release target, and a clean synchronized
+   `main` branch.
 
-Do not enable release-please or workflow write access. Automated tags, direct workflow pushes, and generated release pull requests bypass the repository's signing and review requirements.
+Do not enable release-please or workflow write access. Automated tags, direct
+workflow pushes, and generated release pull requests bypass the repository's
+signing and review requirements.
 
 ## Validation checklist
 
 Before shipping docs or behavior changes:
 
 ```bash
+./scripts/check-stylua
+./scripts/lint
+./scripts/lint-shell
 ./scripts/docs
 ./scripts/test
-stylua lua tests aj
 ```
 
 Also check:

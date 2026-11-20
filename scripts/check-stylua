@@ -1,0 +1,23 @@
+#!/bin/sh
+# Check Lua formatting at the version pinned in mise.toml:
+#   scripts/check-stylua [--] [paths...] (default: .).
+# Pre-commit, pre-push, and manual runs share this entrypoint so rules never drift.
+set -eu
+
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd -P)
+# shellcheck source-path=SCRIPTDIR source=lib/tool-pin.sh
+. "$script_dir/lib/tool-pin.sh"
+
+STYLUA_BIN=stylua
+require_mise_tool "$STYLUA_BIN" stylua "$repo_root/mise.toml" '1s/^stylua //p'
+
+if [ "${1:-}" = "--" ]; then
+  shift
+fi
+
+if [ "$#" -eq 0 ]; then
+  cd "$repo_root"
+  exec "$STYLUA_BIN" --config-path "$repo_root/stylua.toml" --check -- .
+fi
+exec "$STYLUA_BIN" --config-path "$repo_root/stylua.toml" --check -- "$@"

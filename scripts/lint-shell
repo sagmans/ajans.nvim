@@ -1,0 +1,69 @@
+#!/bin/sh
+# Lint and format-check repo-owned shell scripts at the versions pinned in
+# mise.toml:
+#   scripts/lint-shell [--] [paths...]   # check all tracked repo shell scripts or given paths
+#   scripts/lint-shell --pathspecs       # print canonical git pathspecs for pre-commit
+# Without arguments, checks every tracked repo shell script (excluding copied
+# template hook files and untracked local hooks like 90-owner-dco).
+set -eu
+
+print_shell_pathspecs() {
+  printf '%s\n' 'scripts/*' '.githooks/*.d/*' ':!scripts/setup-hooks'
+}
+
+if [ "${1:-}" = "--pathspecs" ]; then
+  if [ "$#" -ne 1 ]; then
+    echo "error: --pathspecs accepts no extra arguments" >&2
+    exit 2
+  fi
+  print_shell_pathspecs
+  exit 0
+fi
+
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd -P)
+# shellcheck source-path=SCRIPTDIR source=lib/tool-pin.sh
+. "$script_dir/lib/tool-pin.sh"
+
+SHELLCHECK_BIN=shellcheck
+SHFMT_BIN=shfmt
+require_mise_tool "$SHELLCHECK_BIN" shellcheck "$repo_root/mise.toml" 's/^version: *//p'
+require_mise_tool "$SHFMT_BIN" shfmt "$repo_root/mise.toml" '1s/^v//p'
+
+if [ "${1:-}" = "--" ]; then
+  shift
+fi
+
+if [ "$#" -eq 0 ]; then
+  cd "$repo_root"
+  set -f
+  specs=$(print_shell_pathspecs)
+  set --
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    set -- "$@" "$spec"
+  done <<EOF
+$specs
+EOF
+  tracked=$(git ls-files --stage -- "$@" | awk -F '\t' '$1 ~ /^(100644|100755) / { print $2 }') || {
+    echo "error: failed to list tracked shell scripts; run from a git checkout" >&2
+    exit 1
+  }
+  set --
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    set -- "$@" "$f"
+  done <<EOF
+$tracked
+EOF
+  set +f
+  if [ "$#" -eq 0 ]; then
+    echo "error: no tracked repo shell scripts found; run from a git checkout" >&2
+    exit 1
+  fi
+fi
+
+# -P anchors any non-SCRIPTDIR source lookups to $repo_root (the snapshot root
+# during pre-commit) so shellcheck -x never reads the live working tree.
+"$SHELLCHECK_BIN" -x -P "$repo_root" -- "$@"
+"$SHFMT_BIN" -d -- "$@"
